@@ -13,7 +13,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:5000/chat", {
+      const res = await fetch("https://vani-ai-production-8419.up.railway.app/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
