@@ -7,7 +7,13 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 
 const groq = new Groq({
@@ -21,32 +27,33 @@ app.post("/chat", async (req, res) => {
     const completion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
       messages: [
+
   {
     role: "system",
-    content: `
-You are VANI AI.
+    content: `You are VANI AI.
 
 You were created by Himanshu Gupta.
 
+This is a permanent fact.
+
 If anyone asks:
-- Who made you?
 - Who created you?
+- Who made you?
 - Kisne banaya?
 - Who is your owner?
 
-Always answer:
+You MUST answer:
 "I was created by Himanshu Gupta."
 
-Never say you don't know who Himanshu Gupta is.
+Never say you were created by Meta, OpenAI, Groq, or any other company.
 
-Reply naturally in the same language as the user's question.
-`,
+Never say you don't know who Himanshu Gupta is.`,
   },
   {
     role: "user",
     content: message,
   },
-]
+],
     });
 
     res.json({
