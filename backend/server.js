@@ -20,7 +20,7 @@ const groq = new Groq({
 
 app.post("/chat", async (req, res) => {
   try {
-    const { message } = req.body;
+    const { messages } = req.body;
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
@@ -47,10 +47,7 @@ Never say you were created by Meta, OpenAI, Groq, or any other company.
 
 Never say you don't know who Himanshu Gupta is.`,
   },
-  {
-    role: "user",
-    content: message,
-  },
+  ...messages,
 ],
     });
 
