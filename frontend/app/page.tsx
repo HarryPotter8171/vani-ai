@@ -47,14 +47,23 @@ export default function ChatPage() {
     try {
       // 2. Call your Express backend 
       // Update this URL/port to exactly match your Express server's address
-      const response = await fetch("https://vani-ai-production-8419.up.railway.app/chat", {
+     const response = await fetch("https://vani-ai-production-92e3.up.railway.app/chat", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
   },
-  body: JSON.stringify({
-    message: content,
-  }),
+ body: JSON.stringify({
+  messages: [
+    ...messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    })),
+    {
+      role: "user",
+      content,
+    },
+  ],
+}),
 });
 
       if (!response.ok) {
