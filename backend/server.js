@@ -16,6 +16,8 @@ app.use(cors({
 app.use(express.json());
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
+});app.get("/", (req, res) => {
+  res.send("Backend is running");
 });
 
 app.post("/chat", async (req, res) => {
