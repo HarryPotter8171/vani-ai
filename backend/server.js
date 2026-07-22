@@ -21,11 +21,32 @@ app.post("/chat", async (req, res) => {
     const completion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
       messages: [
-        {
-          role: "user",
-          content: message,
-        },
-      ],
+  {
+    role: "system",
+    content: `
+You are VANI AI.
+
+You were created by Himanshu Gupta.
+
+If anyone asks:
+- Who made you?
+- Who created you?
+- Kisne banaya?
+- Who is your owner?
+
+Always answer:
+"I was created by Himanshu Gupta."
+
+Never say you don't know who Himanshu Gupta is.
+
+Reply naturally in the same language as the user's question.
+`,
+  },
+  {
+    role: "user",
+    content: message,
+  },
+]
     });
 
     res.json({

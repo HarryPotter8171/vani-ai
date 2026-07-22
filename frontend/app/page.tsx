@@ -1,121 +1,138 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import Sidebar from "@/components/Sidebar";
+import Header from "@/components/Header";
+import ChatInput from "@/components/ChatInput";
+import Message, { MessageProps } from "@/components/Message";
 
-export default function Home() {
-  const [message, setMessage] = useState("");
-  const [reply, setReply] = useState("");
-  const [loading, setLoading] = useState(false);
+export default function ChatPage() {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  const [messages, setMessages] = useState<MessageProps[]>([
+    {
+      id: "welcome-message",
+      role: "assistant",
+      content: "Hello! I am VANI AI. How can I assist you today?",
+    }
+  ]);
 
-  async function handleSend() {
-    if (!message.trim()) return;
+  // Placeholder for sidebar chat history (You can wire this to your backend later)
+  const [chats] = useState([
+    { id: '1', title: 'React Server Components' },
+    { id: '2', title: 'Tailwind CSS Grid Layout' }
+  ]);
 
-    setLoading(true);
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleSendMessage = async (content: string) => {
+   console.log("SEND CLICKED", content); // 1. Immediately inject the user's message into the UI
+    const userMsg: MessageProps = {
+      id: Date.now().toString(),
+      role: "user",
+      content,
+    };
+    
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
 
     try {
-      const res = await fetch("https://vani-ai-production-8419.up.railway.app/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message,
-        }),
-      });
+      // 2. Call your Express backend 
+      // Update this URL/port to exactly match your Express server's address
+      const response = await fetch("https://vani-ai-production-8419.up.railway.app/chat", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    message: content,
+  }),
+});
 
-      const data = await res.json();
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-      setReply(data.reply);
-    } catch (err) {
-      setReply("Server Error");
+      const data = await response.json();console.log("Backend Response:", data);
+
+      // 3. Append Assistant response from Express/Groq
+      const assistantMsg: MessageProps = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        // Extracting data gracefully, adjust property based on your Express JSON design
+        content: data.reply || data.message || data.content || "Sorry, I received an empty response from the server.",
+      };
+      
+      setMessages((prev) => [...prev, assistantMsg]);
+    } catch (error) {
+      console.error("Error communicating with Express backend:", error);
+      
+      const errorMsg: MessageProps = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: "I encountered an error connecting to the server. Please ensure the Express backend is running and the URL is correct.",
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
     }
+  };
 
-    setLoading(false);
-  }
+  const handleNewChat = () => {
+    setMessages([
+      {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: "Hello! I am VANI AI. Let's start a new conversation. What's on your mind?",
+      }
+    ]);
+    if (window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  };
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-white flex">
+    <div className="flex h-screen w-full bg-[#F9F9F9] text-gray-900 font-sans overflow-hidden">
+      {/* Sidebar Component */}
+      <Sidebar 
+        isOpen={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)} 
+        chats={chats}
+        onNewChat={handleNewChat}
+      />
 
-      <aside className="w-64 bg-zinc-900 border-r border-zinc-800 p-5">
-        <h1 className="text-2xl font-bold text-violet-400">
-          VANI AI
-        </h1>
+      {/* Main Layout Area */}
+      <div className="flex-1 flex flex-col h-full min-w-0 bg-[#F9F9F9]">
+        <Header onMenuClick={() => setIsSidebarOpen(true)} />
 
-        <button className="w-full mt-6 bg-violet-600 rounded-lg py-3">
-          + New Chat
-        </button>
+        {/* Scrollable Messages Display */}
+        <main className="flex-1 overflow-y-auto w-full scroll-smooth">
+          <div className="w-full flex flex-col pb-4 pt-6">
+            {messages.map((msg) => (
+              <Message 
+                key={msg.id} 
+                id={msg.id}
+                role={msg.role} 
+                content={msg.content} 
+              />
+            ))}
+            <div ref={messagesEndRef} className="h-2" />
+          </div>
+        </main>
 
-        <div className="mt-8 space-y-3">
-
-          <button className="w-full bg-zinc-800 rounded-lg py-3">
-            📈 Stock Analysis
-          </button>
-
-          <button className="w-full bg-zinc-800 rounded-lg py-3">
-            📁 IPO Analysis
-          </button>
-
-          <button className="w-full bg-zinc-800 rounded-lg py-3">
-            🔍 AI Research
-          </button>
-
-          <button className="w-full bg-zinc-800 rounded-lg py-3">
-            ⚙️ Settings
-          </button>
-
+        {/* Fixed Chat Input */}
+        <div className="w-full z-10 bg-[#F9F9F9]">
+          <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
         </div>
-      </aside>
-
-      <section className="flex-1 flex flex-col">
-
-        <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-8">
-
-          <h2 className="text-xl font-semibold">
-            Welcome to VANI AI
-          </h2>
-
-          <button className="bg-violet-600 px-5 py-2 rounded-lg">
-            Upgrade
-          </button>
-
-        </div>
-
-        <div className="flex-1 flex flex-col items-center justify-center px-10">
-
-          <h1 className="text-5xl font-bold text-violet-400">
-            Wisdom Meets AI
-          </h1>
-
-          <p className="mt-4 text-zinc-400">
-            Your Intelligent Trading Assistant
-          </p><input
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            className="mt-10 w-full max-w-3xl rounded-xl bg-zinc-900 border border-zinc-700 p-5 outline-none"
-            placeholder="Ask anything..."
-          />
-
-          <button
-            onClick={handleSend}
-            className="mt-5 bg-violet-600 px-8 py-3 rounded-xl hover:bg-violet-700"
-          >
-            {loading ? "Loading..." : "Send"}
-          </button>
-
-          {reply && (
-            <div className="mt-10 w-full max-w-3xl rounded-xl bg-zinc-900 border border-zinc-700 p-6">
-
-              <h2 className="text-violet-400 font-bold mb-3">
-                VANI AI
-              </h2>
-
-              <p className="whitespace-pre-wrap">
-                {reply}
-              </p>
-
-            </div>
-          )}</div>
-      </section>
-    </main>
+      </div>
+    </div>
   );
 }
