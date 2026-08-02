@@ -9,6 +9,7 @@ export function useTheme() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reads browser-only APIs (localStorage/matchMedia) unavailable during SSR
     setMounted(true);
     const stored = localStorage.getItem('vani-theme') as Theme | null;
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
