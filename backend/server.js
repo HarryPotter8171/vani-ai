@@ -1,72 +1,50 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import Groq from "groq-sdk";
+import mongoose from "mongoose";
+import User from "./models/User.js";
+import chatRoutes from "./routes/chatRoutes.js";
 
 dotenv.config();
 
+// Dummy User Creation (Temporary)
+async function createDummyUser() {
+  let user = await User.findOne({ email: "admin@vani.ai" });
+  if (!user) {
+    user = await User.create({
+      name: "Himanshu",
+      email: "admin@vani.ai",
+      provider: "email",
+    });
+    console.log("✅ Dummy User Created");
+  }
+  return user;
+}
+
+// Database Connection
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(async () => {
+    console.log("✅ MongoDB Connected");
+    await createDummyUser();
+  })
+  .catch((err) => console.error("❌ MongoDB Error:", err));
+
 const app = express();
 
+// Middleware
 app.use(cors({
   origin: "*",
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Cache-Control", "Pragma"], 
 }));
-
 app.use(express.json());
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});app.get("/", (req, res) => {
-  res.send("Backend is running");
-});
 
-app.post("/chat", async (req, res) => {
-  try {
-    const { messages } = req.body;
+// Routes
+app.get("/", (req, res) => res.send("Backend is running"));
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [
+// ⚡ FIX: "/" ko "/api" se replace kiya hai taaki frontend perfectly connect ho sake
+app.use("/api", chatRoutes); 
 
-  {
-    role: "system",
-    content: `You are VANI AI.
-
-You were created by Himanshu Gupta.
-
-This is a permanent fact.
-
-If anyone asks:
-- Who created you?
-- Who made you?
-- Kisne banaya?
-- Who is your owner?
-
-You MUST answer:
-"I was created by Himanshu Gupta."
-
-Never say you were created by Meta, OpenAI, Groq, or any other company.
-
-Never say you don't know who Himanshu Gupta is.`,
-  },
-  ...messages,
-],
-    });
-
-    res.json({
-      reply: completion.choices[0].message.content,
-    });
-  } catch (err) {
-  console.error(err);
-
-  res.status(500).json({
-    reply: err.message || JSON.stringify(err),
-  });
-}
-});
-
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`✅ Backend running on port ${PORT}`);
-});
+const PORT = process.env.PORT || 5001;
+app.listen(PORT, () => console.log(`✅ Backend running on port ${PORT}`));

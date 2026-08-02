@@ -1,79 +1,97 @@
-import React, { useState, useRef, useEffect } from 'react';
+'use client';
 
-interface ChatInputProps {
+import React, { useState, useRef, useEffect } from 'react';
+import { Paperclip, Mic, Send, Square } from 'lucide-react';
+import { cn } from '@/lib/utils';
+
+export interface ChatInputProps {
   onSendMessage: (message: string) => void;
-  isLoading: boolean;
+  isLoading?: boolean;
 }
 
 export default function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
   const [input, setInput] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-resize logic
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
-    }
-  }, [input]);
+    inputRef.current?.focus();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
-   console.log("HANDLE SUBMIT"); e.preventDefault();
+    e.preventDefault();
     if (!input.trim() || isLoading) return;
-    
-    onSendMessage(input.trim());
+    onSendMessage(input);
     setInput('');
-    
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
+  const canSend = input.trim().length > 0 && !isLoading;
 
   return (
-    <div className="w-full bg-gradient-to-t from-[#F9F9F9] via-[#F9F9F9] to-transparent pt-6 pb-6 px-4 md:px-0">
-      <div className="max-w-3xl mx-auto">
-        <form 
-          onSubmit={handleSubmit}
-          className="relative flex items-end w-full p-2 bg-white border border-gray-200 rounded-3xl shadow-[0_0_20px_rgba(0,0,0,0.03)] focus-within:ring-2 focus-within:ring-black/5 focus-within:border-gray-300 transition-all duration-200"
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center px-5 pb-6 md:px-8 md:pb-8">
+      {/* Soft fade behind input */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-background via-background/90 to-transparent" />
+
+      <form
+        onSubmit={handleSubmit}
+        className={cn(
+          'pointer-events-auto relative flex w-full max-w-[680px] items-center gap-1',
+          'glass-input px-4 py-3 md:px-5 md:py-3.5'
+        )}
+      >
+        <button
+          type="button"
+          className={cn(
+            'hover-lift flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
+            'text-muted-foreground hover:bg-foreground/[0.05] dark:hover:bg-white/[0.06] hover:text-foreground'
+          )}
+          aria-label="Attach file"
         >
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Message VANI AI..."
-            className="w-full max-h-[200px] py-3 pl-4 pr-14 bg-transparent border-0 resize-none focus:ring-0 text-gray-900 placeholder-gray-400 m-0 outline-none overflow-y-auto text-[15px]"
-            rows={1}
-            disabled={isLoading}
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || isLoading}
-            className="absolute right-2.5 bottom-2.5 p-2 rounded-2xl bg-black text-white disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
-          >
-            {isLoading ? (
-              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-              </svg>
-            )}
-          </button>
-        </form>
-        <div className="text-center mt-3 text-[11px] font-medium text-gray-400">
-          VANI AI can make mistakes. Consider verifying important information.
-        </div>
-      </div>
+          <Paperclip size={18} strokeWidth={1.75} />
+        </button>
+
+        <input
+          ref={inputRef}
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Message VANI AI..."
+          disabled={isLoading}
+          className={cn(
+            'min-w-0 flex-1 bg-transparent px-2 text-[15px] tracking-[-0.01em] text-foreground outline-none',
+            'placeholder:text-muted-foreground/45',
+            'disabled:opacity-50'
+          )}
+        />
+
+        <button
+          type="button"
+          className={cn(
+            'hover-lift flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
+            'text-muted-foreground hover:bg-foreground/[0.05] dark:hover:bg-white/[0.06] hover:text-foreground'
+          )}
+          aria-label="Voice input"
+        >
+          <Mic size={18} strokeWidth={1.75} />
+        </button>
+
+        <button
+          type="submit"
+          disabled={!canSend}
+          className={cn(
+            'hover-lift flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all duration-300',
+            canSend
+              ? 'bg-primary text-white shadow-[0_2px_16px_var(--primary-glow)] hover:shadow-[0_4px_24px_var(--primary-glow)]'
+              : 'bg-foreground/[0.05] text-muted-foreground/50 cursor-not-allowed dark:bg-white/[0.06]'
+          )}
+          aria-label={isLoading ? 'Generating' : 'Send message'}
+        >
+          {isLoading ? (
+            <Square size={13} strokeWidth={2.5} fill="currentColor" />
+          ) : (
+            <Send size={16} strokeWidth={2} />
+          )}
+        </button>
+      </form>
     </div>
   );
 }
