@@ -1,4 +1,3 @@
-import User from "../models/User.js";
 import {
   addKnowledgeFile,
   archiveProject,
@@ -26,23 +25,14 @@ import {
 } from "../services/projectMemoryService.js";
 import { searchKnowledgeBase } from "../services/ragService.js";
 
-async function resolveUser(req) {
-  const email =
-    req.body?.userEmail ||
-    req.query?.email ||
-    req.headers["x-user-email"] ||
-    "admin@vani.ai";
-  const name = req.body?.userName || "VANI User";
-
-  let user = await User.findOne({ email: String(email).toLowerCase() });
-  if (!user) {
-    user = await User.create({
-      name,
-      email: String(email).toLowerCase(),
-      provider: "google",
-    });
+/** Authenticated user from requireAuth — never trust client identity. */
+function resolveUser(req) {
+  if (!req.user?._id) {
+    const err = new Error("Authentication required");
+    err.status = 401;
+    throw err;
   }
-  return user;
+  return { _id: req.user._id, id: req.user.id, email: req.user.email, name: req.user.name };
 }
 
 function handleError(res, err, fallback = "Request failed") {

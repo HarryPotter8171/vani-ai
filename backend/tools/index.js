@@ -1,6 +1,8 @@
 import { registerTool, listTools, getFunctionDeclarations, executeTool, getTool } from "./registry.js";
 import { webSearchTool } from "./implementations/webSearch.js";
 import { imageGenerationTool } from "./implementations/imageGeneration.js";
+import { imageEditTool } from "./implementations/imageEdit.js";
+import { ocrTool } from "./implementations/ocr.js";
 import { visionTool } from "./implementations/vision.js";
 import { calculatorTool } from "./implementations/calculator.js";
 import { dateTimeTool } from "./implementations/dateTime.js";
@@ -19,6 +21,8 @@ export function initTools() {
   const builtins = [
     webSearchTool,
     imageGenerationTool,
+    imageEditTool,
+    ocrTool,
     visionTool,
     calculatorTool,
     dateTimeTool,

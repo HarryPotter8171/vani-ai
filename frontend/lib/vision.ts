@@ -2,21 +2,63 @@
 
 export const VISION_MAX_EDGE = 2048;
 export const VISION_JPEG_QUALITY = 0.86;
-export const VISION_IMAGE_ACCEPT = 'image/jpeg,image/jpg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
+export const VISION_IMAGE_ACCEPT =
+  'image/jpeg,image/jpg,image/png,image/webp,image/gif,image/heic,image/heif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.bmp';
+
+const VISION_MIMES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
+  'image/bmp',
+  'image/x-ms-bitmap',
+  'image/x-bmp',
+]);
+
+/** Formats the browser canvas cannot reliably decode — upload raw for server convert. */
+const SERVER_CONVERT_MIMES = new Set([
+  'image/heic',
+  'image/heif',
+  'image/bmp',
+  'image/x-ms-bitmap',
+  'image/x-bmp',
+]);
 
 export function normalizeImageMime(mime: string): string {
   const m = (mime || '').toLowerCase();
   if (m === 'image/jpg') return 'image/jpeg';
-  if (m === 'image/jpeg' || m === 'image/png' || m === 'image/webp') return m;
+  if (m === 'image/heif') return 'image/heic';
+  if (m === 'image/x-ms-bitmap' || m === 'image/x-bmp') return 'image/bmp';
+  if (
+    m === 'image/jpeg' ||
+    m === 'image/png' ||
+    m === 'image/webp' ||
+    m === 'image/gif' ||
+    m === 'image/heic' ||
+    m === 'image/bmp'
+  ) {
+    return m;
+  }
   return 'image/jpeg';
 }
 
 export function isVisionImageFile(file: File): boolean {
   const mime = (file.type || '').toLowerCase();
   if (mime.startsWith('image/')) {
-    return ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(mime);
+    return VISION_MIMES.has(mime);
   }
-  return /\.(jpe?g|png|webp)$/i.test(file.name);
+  return /\.(jpe?g|png|webp|gif|heic|heif|bmp)$/i.test(file.name);
+}
+
+export function needsServerImageConvert(file: File): boolean {
+  const mime = normalizeImageMime(file.type || '');
+  if (SERVER_CONVERT_MIMES.has(mime) || SERVER_CONVERT_MIMES.has(file.type || '')) {
+    return true;
+  }
+  return /\.(heic|heif|bmp)$/i.test(file.name);
 }
 
 function blobToBase64(blob: Blob, signal?: AbortSignal): Promise<string> {
@@ -54,13 +96,16 @@ function pickOutputMime(file: File, hasAlpha: boolean): string {
   // Keep PNG when transparency matters (UI screenshots, diagrams).
   if (hasAlpha && src === 'image/png') return 'image/png';
   if (src === 'image/webp' && file.size < 1.5 * 1024 * 1024) return 'image/webp';
-  // Camera / photo path → JPEG for size.
+  // GIF first-frame / camera / photo path → JPEG for size.
   return 'image/jpeg';
 }
 
 function extensionForMime(mime: string): string {
   if (mime === 'image/png') return 'png';
   if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/gif') return 'gif';
+  if (mime === 'image/heic') return 'heic';
+  if (mime === 'image/bmp') return 'bmp';
   return 'jpg';
 }
 
@@ -72,11 +117,35 @@ export interface OptimizedVisionImage {
   name: string;
   width: number;
   height: number;
+  /** True when bytes were left for the server to convert (HEIC/BMP). */
+  deferredToServer?: boolean;
+}
+
+async function passthroughImage(
+  file: File,
+  onProgress?: (percent: number) => void,
+  signal?: AbortSignal
+): Promise<OptimizedVisionImage> {
+  onProgress?.(40);
+  const dataBase64 = await blobToBase64(file, signal);
+  onProgress?.(100);
+  const mimeType = normalizeImageMime(file.type || 'image/jpeg');
+  return {
+    dataBase64,
+    mimeType,
+    size: file.size,
+    previewUrl: URL.createObjectURL(file),
+    name: file.name || `photo-${Date.now()}.${extensionForMime(mimeType)}`,
+    width: 0,
+    height: 0,
+    deferredToServer: true,
+  };
 }
 
 /**
  * Downscale large camera photos / screenshots and compress for Vision.
- * Falls back to the original bytes if canvas processing fails.
+ * HEIC/BMP skip canvas and upload raw for server-side conversion.
+ * GIF uses first frame via createImageBitmap / canvas.
  */
 export async function optimizeImageForVision(
   file: File,
@@ -84,6 +153,10 @@ export async function optimizeImageForVision(
   signal?: AbortSignal
 ): Promise<OptimizedVisionImage> {
   onProgress?.(8);
+
+  if (needsServerImageConvert(file)) {
+    return passthroughImage(file, onProgress, signal);
+  }
 
   try {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -120,7 +193,6 @@ export async function optimizeImageForVision(
           }
         }
       } catch {
-        // Assume PNG may need alpha if we can't sample.
         hasAlpha = true;
       }
     }
@@ -158,51 +230,16 @@ export async function optimizeImageForVision(
     };
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err;
-
-    // Fallback: send original bytes without canvas processing.
-    onProgress?.(40);
-    const dataBase64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      const onAbort = () => {
-        reader.abort();
-        reject(new DOMException('Aborted', 'AbortError'));
-      };
-      if (signal?.aborted) {
-        onAbort();
-        return;
-      }
-      signal?.addEventListener('abort', onAbort, { once: true });
-      reader.onload = () => {
-        signal?.removeEventListener('abort', onAbort);
-        const result = reader.result;
-        if (typeof result !== 'string') {
-          reject(new Error('Failed to read image'));
-          return;
-        }
-        const comma = result.indexOf(',');
-        resolve(comma >= 0 ? result.slice(comma + 1) : result);
-      };
-      reader.onerror = () => {
-        signal?.removeEventListener('abort', onAbort);
-        reject(reader.error ?? new Error('Failed to read image'));
-      };
-      reader.readAsDataURL(file);
-    });
-    onProgress?.(100);
-    return {
-      dataBase64,
-      mimeType: normalizeImageMime(file.type || 'image/jpeg'),
-      size: file.size,
-      previewUrl: URL.createObjectURL(file),
-      name: file.name || `photo-${Date.now()}.jpg`,
-      width: 0,
-      height: 0,
-    };
+    // Fallback: send original bytes (server will normalize HEIC/GIF/BMP).
+    return passthroughImage(file, onProgress, signal);
   }
 }
 
 /** Ensure clipboard / camera blobs have a usable filename. */
-export function ensureImageFileName(file: File, source: 'paste' | 'camera' | 'upload' = 'upload'): File {
+export function ensureImageFileName(
+  file: File,
+  source: 'paste' | 'camera' | 'upload' = 'upload'
+): File {
   if (file.name && file.name !== 'image.png' && file.name !== 'blob') return file;
   const mime = normalizeImageMime(file.type || 'image/png');
   const ext = extensionForMime(mime);

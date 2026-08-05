@@ -1,21 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { API_BASE_URL, USER_EMAIL, USER_NAME } from '@/lib/constants';
+import { apiFetch } from '@/lib/apiClient';
 import type { ChatSummary, Project, ProjectFile, ProjectMemory } from '@/lib/types';
 
-function withUser(body: Record<string, unknown> = {}) {
-  return { ...body, userEmail: USER_EMAIL, userName: USER_NAME };
-}
-
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-  });
+  const response = await apiFetch(path, init);
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error || `Request failed (${response.status})`);
@@ -36,9 +26,10 @@ export function useProjects() {
     setIsLoading(true);
     setError(null);
     try {
-      const query = new URLSearchParams({ email: USER_EMAIL });
+      const query = new URLSearchParams();
       if (q) query.set('q', q);
-      const data = await api<Project[]>(`/projects?${query}`);
+      const path = query.toString() ? `/projects?${query}` : '/projects';
+      const data = await api<Project[]>(path);
       setProjects(data);
       return data;
     } catch (err) {
@@ -51,10 +42,13 @@ export function useProjects() {
 
   const refreshProjectChats = useCallback(
     async (projectId: string, q = '') => {
-      const query = new URLSearchParams({ email: USER_EMAIL });
+      const query = new URLSearchParams();
       if (q) query.set('q', q);
+      const path = query.toString()
+        ? `/projects/${projectId}/chats?${query}`
+        : `/projects/${projectId}/chats`;
       const data = await api<Array<{ _id: string; title: string; lastMessage?: string; updatedAt?: string }>>(
-        `/projects/${projectId}/chats?${query}`
+        path
       );
       const mapped: ChatSummary[] = data.map((c) => ({
         id: c._id,
@@ -69,19 +63,35 @@ export function useProjects() {
     []
   );
 
+  // Local-only patch, mirrors useChatHistory's updateChatTitle — lets a
+  // project's chat list reflect an auto-generated title instantly.
+  const updateProjectChatTitle = useCallback((chatId: string, title: string) => {
+    setProjectChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, title } : c)));
+  }, []);
+
   useEffect(() => {
-    void refreshProjects();
+    // Defer so the effect itself doesn't synchronously call setState.
+    const timer = window.setTimeout(() => {
+      void refreshProjects();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [refreshProjects]);
 
   useEffect(() => {
-    if (activeProjectId) void refreshProjectChats(activeProjectId);
-    else setProjectChats([]);
+    if (!activeProjectId) {
+      const timer = window.setTimeout(() => setProjectChats([]), 0);
+      return () => window.clearTimeout(timer);
+    }
+    const timer = window.setTimeout(() => {
+      void refreshProjectChats(activeProjectId);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [activeProjectId, refreshProjectChats]);
 
   const selectProject = useCallback(async (projectId: string | null) => {
     setActiveProjectId(projectId);
     if (projectId) {
-      await api(`/projects/${projectId}?email=${encodeURIComponent(USER_EMAIL)}`);
+      await api(`/projects/${projectId}`);
     }
   }, []);
 
@@ -89,7 +99,7 @@ export function useProjects() {
     async (payload: { name: string; description?: string; instructions?: string; systemPrompt?: string }) => {
       const project = await api<Project>('/projects', {
         method: 'POST',
-        body: JSON.stringify(withUser(payload)),
+        body: JSON.stringify(payload),
       });
       await refreshProjects();
       setActiveProjectId(project._id);
@@ -102,7 +112,7 @@ export function useProjects() {
     async (projectId: string, name: string) => {
       await api(`/projects/${projectId}/rename`, {
         method: 'PUT',
-        body: JSON.stringify(withUser({ name })),
+        body: JSON.stringify({ name }),
       });
       await refreshProjects();
     },
@@ -113,7 +123,7 @@ export function useProjects() {
     async (projectId: string, patch: Partial<Project>) => {
       await api(`/projects/${projectId}`, {
         method: 'PUT',
-        body: JSON.stringify(withUser(patch)),
+        body: JSON.stringify(patch),
       });
       await refreshProjects();
     },
@@ -122,7 +132,7 @@ export function useProjects() {
 
   const deleteProject = useCallback(
     async (projectId: string) => {
-      await api(`/projects/${projectId}?email=${encodeURIComponent(USER_EMAIL)}`, {
+      await api(`/projects/${projectId}`, {
         method: 'DELETE',
       });
       if (activeProjectId === projectId) setActiveProjectId(null);
@@ -135,7 +145,7 @@ export function useProjects() {
     async (projectId: string) => {
       const copy = await api<Project>(`/projects/${projectId}/duplicate`, {
         method: 'POST',
-        body: JSON.stringify(withUser()),
+        body: JSON.stringify({}),
       });
       await refreshProjects();
       setActiveProjectId(copy._id);
@@ -148,7 +158,7 @@ export function useProjects() {
     async (projectId: string) => {
       await api(`/projects/${projectId}/archive`, {
         method: 'POST',
-        body: JSON.stringify(withUser()),
+        body: JSON.stringify({}),
       });
       if (activeProjectId === projectId) setActiveProjectId(null);
       await refreshProjects();
@@ -160,7 +170,7 @@ export function useProjects() {
     async (projectId: string, pinned = true) => {
       await api(`/projects/${projectId}/${pinned ? 'pin' : 'unpin'}`, {
         method: 'POST',
-        body: JSON.stringify(withUser()),
+        body: JSON.stringify({}),
       });
       await refreshProjects();
     },
@@ -177,7 +187,7 @@ export function useProjects() {
     }) => {
       const saved = await api<ProjectFile>(`/projects/${projectId}/files`, {
         method: 'POST',
-        body: JSON.stringify(withUser({ file })),
+        body: JSON.stringify({ file }),
       });
       await refreshProjects();
       return saved;
@@ -185,9 +195,21 @@ export function useProjects() {
     [refreshProjects]
   );
 
+  const listFiles = useCallback(async (projectId: string) => {
+    return api<ProjectFile[]>(`/projects/${projectId}/files`);
+  }, []);
+
+  const deleteFile = useCallback(
+    async (projectId: string, fileId: string) => {
+      await api(`/projects/${projectId}/files/${fileId}`, { method: 'DELETE' });
+      await refreshProjects();
+    },
+    [refreshProjects]
+  );
+
   const listMemories = useCallback(async (projectId: string) => {
     return api<{ categories: string[]; memories: ProjectMemory[] }>(
-      `/projects/${projectId}/memories?email=${encodeURIComponent(USER_EMAIL)}`
+      `/projects/${projectId}/memories`
     );
   }, []);
 
@@ -198,7 +220,7 @@ export function useProjects() {
     ) => {
       return api<ProjectMemory>(`/projects/${projectId}/memories`, {
         method: 'POST',
-        body: JSON.stringify(withUser(memory)),
+        body: JSON.stringify(memory),
       });
     },
     []
@@ -217,6 +239,7 @@ export function useProjects() {
     error,
     refreshProjects,
     refreshProjectChats,
+    updateProjectChatTitle,
     selectProject,
     createProject,
     renameProject,
@@ -226,6 +249,8 @@ export function useProjects() {
     archiveProject,
     pinProject,
     uploadKnowledgeFile,
+    listFiles,
+    deleteFile,
     listMemories,
     saveMemory,
   };

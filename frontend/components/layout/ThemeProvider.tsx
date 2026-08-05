@@ -5,6 +5,7 @@ import { useTheme, type Theme } from '@/hooks/useTheme';
 
 interface ThemeContextValue {
   theme: Theme;
+  setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
   mounted: boolean;
 }
@@ -12,10 +13,10 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const { theme, toggleTheme, mounted } = useTheme();
+  const { theme, setTheme, toggleTheme, mounted } = useTheme();
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, mounted }}>
+    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme, mounted }}>
       {children}
     </ThemeContext.Provider>
   );

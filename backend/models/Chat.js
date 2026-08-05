@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 const AttachmentSchema = new mongoose.Schema(
   {
     id: { type: String },
+    fileId: { type: String },
     name: { type: String, required: true, trim: true },
     mimeType: { type: String, default: "application/octet-stream" },
     size: { type: Number, default: 0 },
@@ -13,6 +14,22 @@ const AttachmentSchema = new mongoose.Schema(
     },
     // Cap stored extracted text — never store raw base64 payloads.
     extractedText: { type: String },
+    // Optional image OCR/metadata snapshot (PNG/JPG/WEBP processing).
+    imageMetadata: {
+      type: {
+        width: { type: Number },
+        height: { type: Number },
+        format: { type: String },
+        mimeType: { type: String },
+        space: { type: String },
+        channels: { type: Number },
+        hasAlpha: { type: Boolean },
+        orientation: { type: Number },
+        density: { type: Number },
+        sizeBytes: { type: Number },
+      },
+      default: undefined,
+    },
   },
   { _id: false }
 );
@@ -31,6 +48,18 @@ const MessageSchema = new mongoose.Schema(
     },
     attachments: {
       type: [AttachmentSchema],
+      default: undefined,
+    },
+    /** Per-turn orchestrator metadata (additive — old messages omit this). */
+    meta: {
+      type: {
+        model: { type: String },
+        provider: { type: String },
+        inputTokens: { type: Number },
+        outputTokens: { type: Number },
+        costUsd: { type: Number },
+        latencyMs: { type: Number },
+      },
       default: undefined,
     },
   },
@@ -56,6 +85,11 @@ const ChatSchema = new mongoose.Schema(
       default: "New Chat",
       trim: true,
     },
+    pinned: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     messages: {
       type: [MessageSchema],
       default: [],
@@ -68,14 +102,32 @@ const ChatSchema = new mongoose.Schema(
       type: String,
       default: "gemini",
     },
+    // Public read-only sharing. `shareId` is generated once and kept
+    // forever (even across unshare/re-share cycles) so a single toggle can
+    // gate a link on and off without ever changing it. `sparse: true` lets
+    // every never-shared chat omit the field instead of colliding on `null`
+    // in the unique index.
+    shareId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+    isShared: {
+      type: Boolean,
+      default: false,
+    },
+    sharedAt: {
+      type: Date,
+    },
   },
   {
     timestamps: true,
   }
 );
 
-ChatSchema.index({ user: 1, project: 1, updatedAt: -1 });
-ChatSchema.index({ project: 1, updatedAt: -1 });
+ChatSchema.index({ user: 1, project: 1, pinned: -1, updatedAt: -1 });
+ChatSchema.index({ project: 1, pinned: -1, updatedAt: -1 });
 ChatSchema.index({ title: "text", lastMessage: "text" });
 
 export default mongoose.model("Chat", ChatSchema);

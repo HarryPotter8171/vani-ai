@@ -92,7 +92,10 @@ export const fileReaderTool = {
       if (att.extractedText) {
         pieces.push(`--- File: ${att.name} ---\n${att.extractedText}`);
       } else if (att.kind === "image") {
-        pieces.push(`--- File: ${att.name} ---\n[Image file — use vision_analyze for visual understanding]`);
+        const ocr = att.extractedText
+          ? `\n${att.extractedText}`
+          : "\n[No OCR text stored — use vision_analyze for visual understanding]";
+        pieces.push(`--- File: ${att.name} (image) ---${ocr}`);
       } else if (att.kind === "pdf") {
         pieces.push(
           `--- File: ${att.name} ---\n[PDF is available as multimodal context in the main conversation]`

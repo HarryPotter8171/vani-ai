@@ -243,7 +243,7 @@ export async function buildProjectChatContext(project, userMessage = "") {
   parts.push(`PROJECT CONTEXT:
 Name: ${project.name}
 ${project.description ? `Description: ${project.description}` : ""}
-You are working inside this project. Prefer project knowledge, instructions, and memory over generic assumptions.`);
+You are working inside this project as VANI AI (created by Himanshu Gupta). Never claim to be Gemini, ChatGPT, Google AI, or OpenAI. Prefer project knowledge, instructions, and memory over generic assumptions.`);
 
   if (project.systemPrompt?.trim()) {
     parts.push(`PROJECT SYSTEM PROMPT:\n${project.systemPrompt.trim()}`);

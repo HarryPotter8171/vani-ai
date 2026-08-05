@@ -1,48 +1,152 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { API_BASE_URL, USER_EMAIL, USER_NAME } from '@/lib/constants';
+import { apiFetch } from '@/lib/apiClient';
+import { fileContentUrl } from '@/lib/upload';
 import type { Message, MessageAttachment } from '@/lib/types';
+import type { TurnMeta, TurnUsage } from '@/lib/models';
+import {
+  GateDenialError,
+  parseGateDenial,
+  type GateDenial,
+} from '@/lib/billing/gateError';
 
 interface StreamEvent {
   delta?: string;
+  /** When true, replace the assistant message content instead of appending. */
+  replace?: boolean;
   done?: boolean;
   chatId?: string;
   projectId?: string;
   error?: string;
   rag?: { used?: boolean; chars?: number };
+  meta?: TurnMeta;
+  usage?: TurnUsage;
+  /** Generated image from the image_generation / image_edit tool. */
+  image?: {
+    mimeType?: string;
+    dataBase64?: string;
+    prompt?: string;
+    fileId?: string | null;
+    size?: number;
+  };
+  tool?: {
+    status?: 'start' | 'done';
+    id?: string;
+    name?: string;
+    displayName?: string;
+    ok?: boolean;
+    error?: string;
+  };
+}
+
+// Shape persisted server-side (models/Chat.js) — never includes the raw
+// base64 payload, only lightweight metadata for re-rendering attachment chips.
+interface StoredAttachment {
+  id?: string;
+  fileId?: string;
+  name: string;
+  mimeType?: string;
+  size?: number;
+  kind?: MessageAttachment['kind'];
+  extractedText?: string;
+}
+
+interface StoredMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  attachments?: StoredAttachment[];
+  meta?: Message['meta'] & {
+    inputTokens?: number;
+    outputTokens?: number;
+    costUsd?: number;
+    latencyMs?: number;
+  };
 }
 
 function toWireAttachments(attachments?: MessageAttachment[]) {
   if (!attachments?.length) return undefined;
   return attachments.map((a) => ({
-    id: a.id,
+    id: a.fileId || a.id,
+    fileId: a.fileId || undefined,
     name: a.name,
     mimeType: a.mimeType,
     size: a.size,
     kind: a.kind,
-    dataBase64: a.dataBase64,
+    // Prefer server-side hydration via fileId — only send base64 as fallback
+    // for clients that haven't uploaded yet.
+    ...(a.fileId ? {} : a.dataBase64 ? { dataBase64: a.dataBase64 } : {}),
+    // Pass OCR text so the backend can skip duplicate Tesseract work.
+    ...(a.extractedText ? { extractedText: a.extractedText } : {}),
   }));
 }
 
-export function useChat(options?: { projectId?: string | null }) {
+interface UseChatOptions {
+  projectId?: string | null;
+  /**
+   * Fired once, right after the very first user message of a brand-new chat
+   * finishes persisting server-side (i.e. `chatId` is known). Intended for
+   * auto-title generation — kept as a side-channel callback so the core
+   * send/stream flow above is completely unaffected by it.
+   */
+  onFirstMessagePersisted?: (chatId: string, userMessage: string) => void;
+  /**
+   * Mutable ref so parents can toggle Web Search without reordering hooks
+   * relative to useDeepResearch (which also needs chatId from this hook).
+   */
+  preferWebSearchRef?: { current: boolean };
+  /** Mutable ref for the selected model key (`auto`, `gemini`, `provider/model`). */
+  selectedModelRef?: { current: string };
+  /** Quota / plan denials from UsageGuard (402/403). */
+  onGateDenial?: (denial: GateDenial) => void;
+}
+
+export function useChat(options?: UseChatOptions) {
   const projectId = options?.projectId ?? null;
+  const onFirstMessagePersisted = options?.onFirstMessagePersisted;
+  const preferWebSearchRef = options?.preferWebSearchRef;
+  const selectedModelRef = options?.selectedModelRef;
+  const onGateDenial = options?.onGateDenial;
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isChatLoading, setIsChatLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatIdRef = useRef<string | null>(null);
+
+  // Bumped whenever the active thread changes from under a running stream
+  // (loading a different chat, starting a new one, switching projects).
+  // Stream callbacks captured before the bump compare against this and
+  // become no-ops once stale, so a slow/aborted response from the previous
+  // conversation can never mutate the one the user has since switched to.
+  const generationRef = useRef(0);
+
+  const invalidateActiveStream = useCallback(() => {
+    generationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsLoading(false);
+  }, []);
 
   useEffect(() => {
     chatIdRef.current = chatId;
   }, [chatId]);
 
-  // Switching projects starts a fresh local thread (server chats remain).
+  // Abort any in-flight stream when the project scope changes (external system).
   useEffect(() => {
+    generationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, [projectId]);
+
+  // Switching projects starts a fresh local thread (server chats remain).
+  const [scopedProjectId, setScopedProjectId] = useState(projectId);
+  if (scopedProjectId !== projectId) {
+    setScopedProjectId(projectId);
     setMessages([]);
     setChatId(null);
-    chatIdRef.current = null;
-  }, [projectId]);
+    setIsLoading(false);
+  }
 
   const appendToLastMessage = useCallback((chunk: string) => {
     setMessages((prev) => {
@@ -52,6 +156,21 @@ export function useChat(options?: { projectId?: string | null }) {
         next[next.length - 1] = {
           ...last,
           content: last.content + chunk,
+          isStreaming: true,
+        };
+      }
+      return next;
+    });
+  }, []);
+
+  const replaceLastMessageContent = useCallback((content: string) => {
+    setMessages((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last?.role === 'assistant') {
+        next[next.length - 1] = {
+          ...last,
+          content,
           isStreaming: true,
         };
       }
@@ -71,9 +190,19 @@ export function useChat(options?: { projectId?: string | null }) {
   }, []);
 
   const handleSendMessage = useCallback(
-    async (content: string, attachments?: MessageAttachment[]) => {
+    async (
+      content: string,
+      attachments?: MessageAttachment[],
+      options?: { voiceMode?: boolean }
+    ) => {
       const hasAttachments = !!attachments?.length;
       if (!content.trim() && !hasAttachments) return;
+
+      // Captured before `messages` grows below — the one reliable signal for
+      // "this is the first message of this conversation", regardless of
+      // whether the chat was pre-created via "New Chat" (chatIdRef already
+      // set) or is being created inline by the backend on first send.
+      const isFirstMessage = messages.length === 0;
 
       const newUserMessage: Message = {
         id: Date.now().toString(),
@@ -94,6 +223,9 @@ export function useChat(options?: { projectId?: string | null }) {
       setMessages([...updatedMessagesList, placeholderMessage]);
       setIsLoading(true);
 
+      const myGeneration = ++generationRef.current;
+      const isCurrentGeneration = () => generationRef.current === myGeneration;
+
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
@@ -104,20 +236,29 @@ export function useChat(options?: { projectId?: string | null }) {
             content: m.content,
             attachments: toWireAttachments(m.attachments),
           })),
-          userEmail: USER_EMAIL,
-          userName: USER_NAME,
+          // Explicit multi-file ids for the latest turn (backend also reads
+          // attachment.fileId). Lets tools/hydration resolve uploads reliably.
+          fileIds: attachments
+            ?.map((a) => a.fileId)
+            .filter((id): id is string => typeof id === 'string' && id.length > 0),
           chatId: chatIdRef.current || undefined,
           projectId: projectId || undefined,
+          preferWebSearch: preferWebSearchRef?.current || undefined,
+          model: selectedModelRef?.current || undefined,
+          voiceMode: options?.voiceMode || undefined,
         };
 
-        const response = await fetch(`${API_BASE_URL}/chat`, {
+        const response = await apiFetch('/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
 
         if (!response.ok || !response.body) {
+          const denial = await parseGateDenial(response);
+          if (denial) {
+            throw new GateDenialError(denial);
+          }
           throw new Error('Backend response error');
         }
 
@@ -126,6 +267,10 @@ export function useChat(options?: { projectId?: string | null }) {
         let buffer = '';
 
         while (true) {
+          // The user navigated away (new chat / loaded a different
+          // conversation) — stop applying this stream's output entirely.
+          if (!isCurrentGeneration()) break;
+
           const { value, done } = await reader.read();
           if (done) break;
 
@@ -134,6 +279,8 @@ export function useChat(options?: { projectId?: string | null }) {
           buffer = frames.pop() ?? '';
 
           for (const frame of frames) {
+            if (!isCurrentGeneration()) break;
+
             const line = frame.trim();
             if (!line.startsWith('data:')) continue;
 
@@ -147,32 +294,153 @@ export function useChat(options?: { projectId?: string | null }) {
               continue;
             }
 
-            if (event.delta) {
-              appendToLastMessage(event.delta);
+            if (event.meta) {
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role !== 'assistant') return prev;
+                next[next.length - 1] = {
+                  ...last,
+                  meta: {
+                    model: event.meta?.modelKey || event.meta?.model,
+                    provider: event.meta?.provider,
+                    displayName: event.meta?.displayName,
+                    reason: event.meta?.reason,
+                    fallback: event.meta?.fallback,
+                  },
+                };
+                return next;
+              });
+            } else if (event.usage) {
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role !== 'assistant') return prev;
+                next[next.length - 1] = {
+                  ...last,
+                  usage: event.usage,
+                };
+                return next;
+              });
+            } else if (event.delta != null && event.delta !== '') {
+              if (event.replace) {
+                // Image-edit success caption replaces any temporary tool status.
+                replaceLastMessageContent(event.delta);
+              } else {
+                appendToLastMessage(event.delta);
+              }
+            } else if (event.tool?.status === 'start' && event.tool.displayName) {
+              // Temporary progress only — replace:true deltas overwrite this.
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role !== 'assistant') return prev;
+                if (last.content?.trim()) return prev;
+                const label = String(event.tool?.displayName || '').trim();
+                const content = /\.\.\.$/.test(label) ? label : `${label}...`;
+                next[next.length - 1] = {
+                  ...last,
+                  content,
+                  isStreaming: true,
+                };
+                return next;
+              });
+            } else if (event.image?.dataBase64 || event.image?.fileId) {
+              const mimeType = event.image.mimeType || 'image/png';
+              const fileId = event.image.fileId || undefined;
+              const previewUrl = event.image.dataBase64
+                ? `data:${mimeType};base64,${event.image.dataBase64}`
+                : fileId
+                  ? fileContentUrl(fileId)
+                  : undefined;
+              const generated: MessageAttachment = {
+                id: fileId || `gen-${Date.now()}`,
+                fileId,
+                name: event.image.prompt?.trim() || 'Generated image',
+                mimeType,
+                size:
+                  typeof event.image.size === 'number'
+                    ? event.image.size
+                    : event.image.dataBase64
+                      ? Math.floor(event.image.dataBase64.length * 0.75)
+                      : 0,
+                kind: 'image',
+                previewUrl,
+                // Keep base64 only when we lack a durable fileId (follow-ups
+                // prefer fileId via toWireAttachments).
+                ...(fileId ? {} : event.image.dataBase64
+                  ? { dataBase64: event.image.dataBase64 }
+                  : {}),
+              };
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role !== 'assistant') return prev;
+                next[next.length - 1] = {
+                  ...last,
+                  attachments: [...(last.attachments || []), generated],
+                  isStreaming: true,
+                };
+                return next;
+              });
             } else if (event.error) {
               appendToLastMessage(`\n\n_${event.error}_`);
             } else if (event.done && event.chatId) {
               setChatId(event.chatId);
               chatIdRef.current = event.chatId;
+              if (isFirstMessage) {
+                // Attachment-only sends can have empty text — fall back to
+                // the first attachment's name so title generation still has
+                // something meaningful to work with.
+                const titleSource = content.trim() || attachments?.[0]?.name || '';
+                onFirstMessagePersisted?.(event.chatId, titleSource);
+              }
             }
           }
         }
       } catch (error) {
         if ((error as Error).name === 'AbortError') {
-          // User pressed Stop — keep whatever streamed so far.
-        } else {
+          // User pressed Stop, or navigated to a different chat — keep
+          // whatever streamed so far on the conversation it belongs to.
+        } else if (error instanceof GateDenialError) {
+          if (isCurrentGeneration()) {
+            // Drop the empty assistant placeholder — banner/toast handles UX.
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === 'assistant' && !last.content?.trim()) {
+                next.pop();
+                return next;
+              }
+              return prev;
+            });
+            onGateDenial?.(error.denial);
+          }
+        } else if (isCurrentGeneration()) {
           console.error('Message error:', error);
           appendToLastMessage(
             'Backend se connect nahi ho pa raha hai. Please check if your server is running on port 5001.'
           );
         }
       } finally {
-        setIsLoading(false);
-        finalizeLastMessage();
-        abortControllerRef.current = null;
+        if (isCurrentGeneration()) {
+          setIsLoading(false);
+          finalizeLastMessage();
+          abortControllerRef.current = null;
+        }
       }
     },
-    [messages, projectId, appendToLastMessage, finalizeLastMessage]
+    [
+      messages,
+      projectId,
+      preferWebSearchRef,
+      selectedModelRef,
+      appendToLastMessage,
+      replaceLastMessageContent,
+      finalizeLastMessage,
+      onFirstMessagePersisted,
+      onGateDenial,
+    ]
   );
 
   const stopGenerating = useCallback(() => {
@@ -180,6 +448,7 @@ export function useChat(options?: { projectId?: string | null }) {
   }, []);
 
   const clearMessages = useCallback(() => {
+    invalidateActiveStream();
     setMessages((prev) => {
       prev.forEach((m) => {
         m.attachments?.forEach((a) => {
@@ -190,34 +459,92 @@ export function useChat(options?: { projectId?: string | null }) {
     });
     setChatId(null);
     chatIdRef.current = null;
-  }, []);
+  }, [invalidateActiveStream]);
 
+  // GET /api/chat/:id — fetches the full, persisted message history for a
+  // past conversation and swaps it in as the active thread. Any in-flight
+  // stream for the previously active chat is invalidated first, so a
+  // straggling delta can never land on the conversation the user just
+  // switched to (see generationRef above).
   const loadChat = useCallback(async (id: string) => {
-    const response = await fetch(`${API_BASE_URL}/chat/${id}`);
-    if (!response.ok) throw new Error('Unable to load chat');
-    const chat = await response.json();
-    const loaded: Message[] = (chat.messages || []).map(
-      (m: { role: 'user' | 'assistant'; content: string }, index: number) => ({
-        id: `${id}-${index}`,
-        role: m.role,
-        content: m.content,
-      })
-    );
-    setMessages(loaded);
-    setChatId(chat._id);
-    chatIdRef.current = chat._id;
-  }, []);
+    invalidateActiveStream();
+    setIsChatLoading(true);
+    try {
+      const response = await apiFetch(`/chat/${id}`);
+      if (!response.ok) {
+        throw new Error(
+          response.status === 404 ? 'This conversation no longer exists.' : 'Unable to load conversation'
+        );
+      }
+
+      const chat = await response.json();
+      const loaded: Message[] = ((chat.messages || []) as StoredMessage[])
+        .filter((m): m is StoredMessage & { role: 'user' | 'assistant' } => m.role !== 'system')
+        .map((m, index) => ({
+          id: `${id}-${index}`,
+          role: m.role,
+          content: m.content,
+          attachments: m.attachments?.length
+            ? m.attachments.map((a, attIndex) => {
+                const fileId = a.fileId || a.id;
+                const kind = a.kind || 'unknown';
+                return {
+                  id: fileId || `${id}-${index}-${attIndex}`,
+                  fileId,
+                  name: a.name,
+                  mimeType: a.mimeType || 'application/octet-stream',
+                  size: a.size || 0,
+                  kind,
+                  extractedText: a.extractedText,
+                  previewUrl:
+                    kind === 'image' && fileId ? fileContentUrl(fileId) : undefined,
+                };
+              })
+            : undefined,
+          meta: m.meta
+            ? {
+                model: m.meta.model,
+                provider: m.meta.provider,
+              }
+            : undefined,
+          usage: m.meta
+            ? (() => {
+                const total =
+                  (m.meta.inputTokens || 0) + (m.meta.outputTokens || 0);
+                return {
+                  inputTokens: m.meta.inputTokens,
+                  outputTokens: m.meta.outputTokens,
+                  totalTokens: total > 0 ? total : undefined,
+                  costUsd: m.meta.costUsd,
+                  latencyMs: m.meta.latencyMs,
+                  provider: m.meta.provider,
+                  model: m.meta.model,
+                  modelKey: m.meta.model,
+                };
+              })()
+            : undefined,
+        }));
+
+      setMessages(loaded);
+      setChatId(chat._id);
+      chatIdRef.current = chat._id;
+    } finally {
+      setIsChatLoading(false);
+    }
+  }, [invalidateActiveStream]);
 
   return {
     messages,
     chatId,
     isLoading,
+    isChatLoading,
     handleSendMessage,
     stopGenerating,
     appendToLastMessage,
     finalizeLastMessage,
     clearMessages,
     setMessages,
+    setChatId,
     loadChat,
   };
 }

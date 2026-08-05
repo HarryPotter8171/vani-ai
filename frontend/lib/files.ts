@@ -9,15 +9,21 @@ export type AttachmentKind =
   | 'zip'
   | 'unknown';
 
-export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB per file
+/** Per-file cap — aligned with backend/config/upload.js (25 MB). */
+export const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 export const MAX_FILES = 10;
-export const MAX_TOTAL_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB total
+/** Soft total budget across attachments in one composer turn. */
+export const MAX_TOTAL_SIZE_BYTES = 50 * 1024 * 1024;
 
 const EXT_TO_KIND: Record<string, AttachmentKind> = {
   jpg: 'image',
   jpeg: 'image',
   png: 'image',
   webp: 'image',
+  gif: 'image',
+  heic: 'image',
+  heif: 'image',
+  bmp: 'image',
   pdf: 'pdf',
   docx: 'docx',
   txt: 'text',
@@ -34,6 +40,12 @@ const MIME_TO_KIND: Record<string, AttachmentKind> = {
   'image/jpg': 'image',
   'image/png': 'image',
   'image/webp': 'image',
+  'image/gif': 'image',
+  'image/heic': 'image',
+  'image/heif': 'image',
+  'image/bmp': 'image',
+  'image/x-ms-bitmap': 'image',
+  'image/x-bmp': 'image',
   'application/pdf': 'pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
   'text/plain': 'text',
@@ -59,16 +71,24 @@ export const ACCEPT_ATTRIBUTE = [
   '.jpeg',
   '.png',
   '.webp',
+  '.gif',
+  '.heic',
+  '.heif',
+  '.bmp',
   'image/jpeg',
   'image/jpg',
   'image/png',
   'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
+  'image/bmp',
   'application/pdf',
 ].join(',');
 
 /** Image-only accept string for camera / vision pickers */
 export const IMAGE_ACCEPT_ATTRIBUTE =
-  'image/jpeg,image/jpg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
+  'image/jpeg,image/jpg,image/png,image/webp,image/gif,image/heic,image/heif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.bmp';
 
 export function getExtension(filename: string): string {
   const i = filename.lastIndexOf('.');
@@ -88,6 +108,9 @@ export function resolveMimeType(file: { name: string; type?: string }, kind: Att
       const ext = getExtension(file.name);
       if (ext === 'png') return 'image/png';
       if (ext === 'webp') return 'image/webp';
+      if (ext === 'gif') return 'image/gif';
+      if (ext === 'heic' || ext === 'heif') return 'image/heic';
+      if (ext === 'bmp') return 'image/bmp';
       return 'image/jpeg';
     }
     case 'pdf':

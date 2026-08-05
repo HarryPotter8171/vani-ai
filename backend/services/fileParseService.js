@@ -1,18 +1,34 @@
-import mammoth from "mammoth";
-import * as XLSX from "xlsx";
 import AdmZip from "adm-zip";
+import { parseBuffer } from "./parsers/index.js";
+import { processImage, toUserFacingImageText } from "./image/index.js";
+import { processImageForVision } from "./vision/imageProcessor.js";
 
 const MAX_EXTRACTED_CHARS = 120_000;
 const MAX_ZIP_ENTRIES = 40;
 const MAX_ZIP_ENTRY_BYTES = 2 * 1024 * 1024;
+/** Cap OCR/metadata text stored on chat attachments. */
+const MAX_IMAGE_CONTEXT_CHARS = 20_000;
 
 const IMAGE_KINDS = new Set(["image"]);
 const INLINE_DOC_KINDS = new Set(["pdf"]); // Gemini natively understands PDFs
+/** Kinds that go through the modular plain-text parsers (no RAG/embeddings). */
+const TEXT_PARSER_KINDS = new Set(["docx", "xlsx", "csv", "text", "markdown"]);
 
 function normalizeImageMime(mimeType = "") {
   const mime = mimeType.toLowerCase();
   if (mime === "image/jpg") return "image/jpeg";
-  if (mime === "image/jpeg" || mime === "image/png" || mime === "image/webp") return mime;
+  if (mime === "image/heif") return "image/heic";
+  if (mime === "image/x-ms-bitmap" || mime === "image/x-bmp") return "image/bmp";
+  if (
+    mime === "image/jpeg" ||
+    mime === "image/png" ||
+    mime === "image/webp" ||
+    mime === "image/gif" ||
+    mime === "image/heic" ||
+    mime === "image/bmp"
+  ) {
+    return mime;
+  }
   if (mime.startsWith("image/")) return "image/jpeg";
   return mimeType || "image/jpeg";
 }
@@ -21,7 +37,12 @@ function kindFromName(name = "", mimeType = "") {
   const lower = name.toLowerCase();
   const mime = (mimeType || "").toLowerCase();
 
-  if (mime.startsWith("image/") || /\.(jpe?g|png|webp)$/i.test(lower)) return "image";
+  if (
+    mime.startsWith("image/") ||
+    /\.(jpe?g|png|webp|gif|heic|heif|bmp)$/i.test(lower)
+  ) {
+    return "image";
+  }
   if (mime === "application/pdf" || lower.endsWith(".pdf")) return "pdf";
   if (
     mime.includes("wordprocessingml") ||
@@ -51,28 +72,81 @@ function bufferFromBase64(dataBase64) {
   return Buffer.from(dataBase64, "base64");
 }
 
-async function extractDocx(buffer) {
-  const result = await mammoth.extractRawText({ buffer });
-  return (result.value || "").trim();
+async function extractViaParsers(buffer, name, mimeType) {
+  const { text } = await parseBuffer(buffer, { filename: name, mimeType });
+  return text;
 }
 
-function extractSpreadsheet(buffer) {
-  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
-  const sections = [];
+/**
+ * Run OCR + metadata for a chat image attachment.
+ * Failures are soft — the native image inlineData still reaches the model.
+ */
+async function processImageAttachment(buffer, name, mimeType, existing = {}) {
+  // Prefer existing OCR from document understanding — skip duplicate Tesseract.
+  if (existing.extractedText && existing.imageMetadata) {
+    return {
+      text: truncate(existing.extractedText, MAX_IMAGE_CONTEXT_CHARS),
+      imageMetadata: existing.imageMetadata,
+      inlineMime: normalizeImageMime(mimeType),
+      inlineBase64: null,
+    };
+  }
 
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const csv = XLSX.utils.sheet_to_csv(sheet);
-    if (csv.trim()) {
-      sections.push(`### Sheet: ${sheetName}\n${csv.trim()}`);
+  if (existing.extractedText) {
+    try {
+      const optimized = await processImageForVision(buffer, {
+        filename: name,
+        mimeType,
+      });
+      return {
+        text: truncate(existing.extractedText, MAX_IMAGE_CONTEXT_CHARS),
+        imageMetadata: existing.imageMetadata || {
+          width: optimized.width,
+          height: optimized.height,
+          format: optimized.format,
+          mimeType: optimized.mimeType,
+          sizeBytes: optimized.sizeBytes,
+        },
+        inlineMime: optimized.mimeType,
+        inlineBase64: optimized.buffer.toString("base64"),
+      };
+    } catch {
+      return {
+        text: truncate(existing.extractedText, MAX_IMAGE_CONTEXT_CHARS),
+        imageMetadata: existing.imageMetadata,
+        inlineMime: normalizeImageMime(mimeType),
+        inlineBase64: null,
+      };
     }
   }
 
-  return sections.join("\n\n");
-}
-
-function extractPlainText(buffer) {
-  return buffer.toString("utf8").trim();
+  try {
+    // Normalize HEIC/GIF/BMP (and compress) before OCR + Gemini inlineData.
+    const optimized = await processImageForVision(buffer, {
+      filename: name,
+      mimeType,
+    });
+    const processed = await processImage(optimized.buffer, {
+      filename: name.replace(/\.[^.]+$/, `.${optimized.format === "jpeg" ? "jpg" : optimized.format}`),
+      mimeType: optimized.mimeType,
+    });
+    return {
+      text: truncate(processed.text, MAX_IMAGE_CONTEXT_CHARS),
+      imageMetadata: processed.metadata,
+      inlineMime: optimized.mimeType,
+      inlineBase64: optimized.buffer.toString("base64"),
+    };
+  } catch (err) {
+    console.error(`Image processing failed for “${name}”:`, err.message);
+    return {
+      text: existing.extractedText
+        ? truncate(existing.extractedText, MAX_IMAGE_CONTEXT_CHARS)
+        : "[Image metadata/OCR unavailable for this attachment]",
+      imageMetadata: existing.imageMetadata || undefined,
+      inlineMime: normalizeImageMime(mimeType),
+      inlineBase64: null,
+    };
+  }
 }
 
 async function extractZip(buffer) {
@@ -102,16 +176,14 @@ async function extractZip(buffer) {
       }
 
       let text = "";
-      if (kind === "docx") text = await extractDocx(data);
-      else if (kind === "xlsx" || kind === "csv") {
-        text = kind === "csv" ? extractPlainText(data) : extractSpreadsheet(data);
-      } else if (kind === "text" || kind === "markdown" || kind === "unknown") {
-        // Only attempt text decode for likely text-like unknowns with small size
-        if (kind === "unknown" && !/\.(json|xml|html?|log|yml|yaml)$/i.test(entry.entryName)) {
+      if (TEXT_PARSER_KINDS.has(kind)) {
+        text = await extractViaParsers(data, entry.entryName, "");
+      } else if (kind === "unknown") {
+        if (!/\.(json|xml|html?|log|yml|yaml)$/i.test(entry.entryName)) {
           parts.push(`### ${entry.entryName}\n[Unsupported binary entry]`);
           continue;
         }
-        text = extractPlainText(data);
+        text = data.toString("utf8").trim();
       } else if (kind === "zip") {
         parts.push(`### ${entry.entryName}\n[Nested ZIP skipped]`);
         continue;
@@ -128,8 +200,9 @@ async function extractZip(buffer) {
 }
 
 /**
- * Parse a non-vision attachment into plain text for model context.
- * Images and PDFs are returned as inlineData parts instead.
+ * Parse an attachment into model context.
+ * Images keep native inlineData and also inject OCR + metadata text.
+ * PDFs stay as inlineData only (Gemini document understanding).
  */
 export async function parseAttachment(attachment) {
   const kind = attachment.kind || kindFromName(attachment.name, attachment.mimeType);
@@ -144,6 +217,7 @@ export async function parseAttachment(attachment) {
         name,
         mimeType,
         text: truncate(attachment.extractedText),
+        imageMetadata: attachment.imageMetadata,
         inlinePart: null,
       };
     }
@@ -152,21 +226,50 @@ export async function parseAttachment(attachment) {
       name,
       mimeType,
       text: `[Attached file “${name}” — content unavailable in this session]`,
+      imageMetadata: attachment.imageMetadata,
       inlinePart: null,
     };
   }
 
-  if (IMAGE_KINDS.has(kind) || INLINE_DOC_KINDS.has(kind)) {
-    const inlineMime =
-      kind === "pdf" ? "application/pdf" : normalizeImageMime(mimeType);
+  if (IMAGE_KINDS.has(kind)) {
+    const inlineMime = normalizeImageMime(mimeType);
+    const buffer = bufferFromBase64(attachment.dataBase64);
+    const processed = await processImageAttachment(buffer, name, inlineMime, {
+      extractedText: attachment.extractedText,
+      imageMetadata: attachment.imageMetadata,
+    });
+
+    const data =
+      processed.inlineBase64 ||
+      attachment.dataBase64;
+    const mime = processed.inlineMime || inlineMime;
+
     return {
       kind,
       name,
-      mimeType: inlineMime,
+      mimeType: mime,
+      text: processed.text,
+      imageMetadata: processed.imageMetadata,
+      inlinePart: {
+        inlineData: {
+          mimeType: mime === "image/heic" || mime === "image/bmp" || mime === "image/gif"
+            ? "image/jpeg"
+            : mime,
+          data,
+        },
+      },
+    };
+  }
+
+  if (INLINE_DOC_KINDS.has(kind)) {
+    return {
+      kind,
+      name,
+      mimeType: "application/pdf",
       text: null,
       inlinePart: {
         inlineData: {
-          mimeType: inlineMime,
+          mimeType: "application/pdf",
           data: attachment.dataBase64,
         },
       },
@@ -177,12 +280,13 @@ export async function parseAttachment(attachment) {
   let text = "";
 
   try {
-    if (kind === "docx") text = await extractDocx(buffer);
-    else if (kind === "xlsx") text = extractSpreadsheet(buffer);
-    else if (kind === "csv" || kind === "text" || kind === "markdown") {
-      text = extractPlainText(buffer);
-    } else if (kind === "zip") text = await extractZip(buffer);
-    else text = extractPlainText(buffer);
+    if (TEXT_PARSER_KINDS.has(kind)) {
+      text = await extractViaParsers(buffer, name, mimeType);
+    } else if (kind === "zip") {
+      text = await extractZip(buffer);
+    } else {
+      text = buffer.toString("utf8").trim();
+    }
   } catch (err) {
     text = `[Could not parse “${name}”: ${err.message}]`;
   }
@@ -218,20 +322,36 @@ export async function buildMessageParts(message) {
   for (const att of attachments) {
     const parsed = await parseAttachment(att);
 
+    // Persist OCR-only text for images — never expose Format/Dimensions
+    // metadata blocks to the client. Full metadata still reaches the model
+    // via documentBlocks below.
+    let persistedExtracted = parsed.text
+      ? truncate(parsed.text, MAX_IMAGE_CONTEXT_CHARS)
+      : undefined;
+    if (parsed.kind === "image" && persistedExtracted) {
+      persistedExtracted = toUserFacingImageText(persistedExtracted) || undefined;
+    }
+
     persistedAttachments.push({
-      id: att.id,
+      id: att.fileId || att.id,
+      fileId: att.fileId || (typeof att.id === "string" ? att.id : undefined),
       name: parsed.name,
       mimeType: parsed.mimeType,
       size: att.size || 0,
       kind: parsed.kind,
-      extractedText: parsed.text ? truncate(parsed.text, 20_000) : undefined,
+      extractedText: persistedExtracted,
+      imageMetadata: parsed.imageMetadata || undefined,
     });
 
     if (parsed.inlinePart) {
       parts.push(parsed.inlinePart);
       if (parsed.kind === "image") {
         imageCount += 1;
-        documentBlocks.push(`[Image ${imageCount}: ${parsed.name}]`);
+        // Inject OCR + metadata into the text context the model reads.
+        const block = parsed.text
+          ? `[Image ${imageCount}: ${parsed.name}]\n${parsed.text}`
+          : `[Image ${imageCount}: ${parsed.name}]`;
+        documentBlocks.push(block);
       } else {
         documentBlocks.push(`[Attached ${parsed.kind}: ${parsed.name}]`);
       }
@@ -245,8 +365,8 @@ export async function buildMessageParts(message) {
     promptText =
       imageCount > 0
         ? imageCount === 1
-          ? "Analyze this image in detail. Identify the type of content (chart, document, screenshot, handwriting, math, receipt, photo, etc.) and provide the most useful insights."
-          : `Analyze these ${imageCount} images in detail. Refer to them as Image 1, Image 2, etc. Identify content types and provide the most useful insights.`
+          ? "Analyze this image in detail. Identify the type of content (chart, document, screenshot, handwriting, math, receipt, photo, etc.) and provide the most useful insights. Use the OCR text and metadata when present."
+          : `Analyze these ${imageCount} images in detail. Refer to them as Image 1, Image 2, etc. Identify content types and provide the most useful insights. Use the OCR text and metadata when present.`
         : "Please analyze the attached file(s).";
   }
 

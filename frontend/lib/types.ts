@@ -1,23 +1,53 @@
 import type { AttachmentKind } from '@/lib/files';
+import type { DocumentUnderstandingResult } from '@/lib/documentUnderstanding';
 
 export interface MessageAttachment {
   id: string;
+  /** Server upload id from POST /api/files/upload — preferred over dataBase64. */
+  fileId?: string;
   name: string;
   mimeType: string;
   size: number;
   kind: AttachmentKind;
   /** Object/data URL for image thumbnails in the UI */
   previewUrl?: string;
-  /** Raw base64 payload (no data-URL prefix) — sent to the API */
+  /**
+   * Raw base64 payload (no data-URL prefix). Optional when `fileId` is set —
+   * the backend hydrates bytes from disk.
+   */
   dataBase64?: string;
+  /** Plain text from document understanding (shown in preview; powers follow-ups). */
+  extractedText?: string;
+  documentType?: string;
+  extractionMethod?: string;
 }
 
-export type PendingAttachmentStatus = 'reading' | 'ready' | 'error';
+export type PendingAttachmentStatus = 'reading' | 'analyzing' | 'ready' | 'error';
 
 export interface PendingAttachment extends MessageAttachment {
   status: PendingAttachmentStatus;
   progress: number;
   error?: string;
+  understanding?: DocumentUnderstandingResult;
+}
+
+export interface MessageMeta {
+  model?: string;
+  provider?: string;
+  displayName?: string;
+  reason?: string;
+  fallback?: boolean;
+}
+
+export interface MessageUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
+  latencyMs?: number;
+  provider?: string;
+  model?: string;
+  modelKey?: string;
 }
 
 export interface Message {
@@ -26,6 +56,8 @@ export interface Message {
   content: string;
   isStreaming?: boolean;
   attachments?: MessageAttachment[];
+  meta?: MessageMeta;
+  usage?: MessageUsage;
 }
 
 export interface ChatSummary {
@@ -34,6 +66,7 @@ export interface ChatSummary {
   lastMessage?: string;
   updatedAt?: string;
   project?: string | null;
+  pinned?: boolean;
 }
 
 export type ProjectMemoryCategory =

@@ -1,6 +1,10 @@
+import crypto from "crypto";
 import Chat from "../models/Chat.js";
 import User from "../models/User.js";
 import { prepareMessages, streamAgentReply } from "../services/geminiService.js";
+import { hydrateChatMessages } from "../services/chatAttachmentService.js";
+import { storeGeneratedImage } from "../services/fileService.js";
+import { DEFAULT_CHAT_TITLE, generateChatTitle } from "../services/titleService.js";
 import { initTools } from "../tools/index.js";
 import {
   buildProjectChatContext,
@@ -8,6 +12,29 @@ import {
   syncChatCount,
   touchProject,
 } from "../services/projectService.js";
+import {
+  autoCaptureFromChat,
+  buildMemoryPromptExtras,
+} from "../services/memory/index.js";
+import { sanitizeAssistantDelta } from "../services/image/index.js";
+import {
+  sanitizeIdentityResponse,
+} from "../services/identity/IdentityGuard.js";
+
+
+/** Load a chat owned by the authenticated user, or null. */
+async function findOwnedChat(chatId, userId, select) {
+  if (!chatId || !userId) return null;
+  try {
+    const q = Chat.findOne({ _id: chatId, user: userId });
+    if (select) q.select(select);
+    return await q;
+  } catch (err) {
+    if (err.name === "CastError") return null;
+    throw err;
+  }
+}
+
 
 // Buffers streamed text around the secret "[UPDATE_NAME: ...]" tag so it is
 // held back and never leaked to the client mid-stream, while still allowing
@@ -65,12 +92,10 @@ function createNameTagFilter() {
 
 export const getAllChats = async (req, res) => {
   try {
-    const { email, projectId, q } = req.query;
-    if (!email) return res.json([]);
-    const user = await User.findOne({ email });
-    if (!user) return res.json([]);
+    const { projectId, q } = req.query;
+    const userId = req.user._id;
 
-    const filter = { user: user._id };
+    const filter = { user: userId };
     if (projectId) filter.project = projectId;
     else filter.project = null; // personal chats outside projects
 
@@ -80,8 +105,10 @@ export const getAllChats = async (req, res) => {
     }
 
     const chats = await Chat.find(filter)
-      .sort({ updatedAt: -1 })
-      .select("_id title lastMessage updatedAt project")
+      // Pinned chats always float to the top; chronological order
+      // (updatedAt desc) is unchanged as the tiebreak/secondary sort.
+      .sort({ pinned: -1, updatedAt: -1 })
+      .select("_id title lastMessage pinned updatedAt project")
       .limit(100);
     res.json(chats);
   } catch (err) {
@@ -92,10 +119,14 @@ export const getAllChats = async (req, res) => {
 
 export const getChatById = async (req, res) => {
   try {
-    const chat = await Chat.findById(req.params.id);
+    const chat = await findOwnedChat(req.params.id, req.user._id);
     if (!chat) return res.status(404).json({ error: "Chat not found" });
     res.json(chat);
   } catch (err) {
+    // Malformed id (e.g. stale/optimistic id) is a 404, not a server error.
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: "Chat not found" });
+    }
     console.error(err);
     res.status(500).json({ error: "Unable to load chat" });
   }
@@ -103,10 +134,14 @@ export const getChatById = async (req, res) => {
 
 export const deleteChat = async (req, res) => {
   try {
-    const deleted = await Chat.findByIdAndDelete(req.params.id);
+    const deleted = await Chat.findOneAndDelete({ _id: req.params.id, user: req.user._id });
     if (!deleted) return res.status(404).json({ error: "Chat not found" });
     res.json({ message: "Chat deleted", id: req.params.id });
   } catch (err) {
+    // Malformed id (e.g. stale/optimistic id) is a 404, not a server error.
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: "Chat not found" });
+    }
     console.error(err);
     res.status(500).json({ error: "Delete failed" });
   }
@@ -115,7 +150,12 @@ export const deleteChat = async (req, res) => {
 export const renameChat = async (req, res) => {
   try {
     const { title } = req.body;
-    const updated = await Chat.findByIdAndUpdate(req.params.id, { title }, { new: true });
+    const updated = await Chat.findOneAndUpdate(
+      { _id: req.params.id, user: req.user._id },
+      { title },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: "Chat not found" });
     res.json(updated);
   } catch (err) {
     console.error(err);
@@ -123,8 +163,257 @@ export const renameChat = async (req, res) => {
   }
 };
 
+// POST /api/chat/new — creates a fresh, empty chat (no AI call). Kept separate
+// from createOrUpdateChat (streaming send) so the client can get a durable
+// chatId up front, before the user has typed a first message.
+export const createChat = async (req, res) => {
+  try {
+    const { projectId, title } = req.body;
+    const user = { _id: req.user._id, email: req.user.email, name: req.user.name };
+
+    let project = null;
+    if (projectId) {
+      project = await getProjectForUser(projectId, user._id);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      await touchProject(project._id);
+    }
+
+    const chat = await Chat.create({
+      user: user._id,
+      project: project?._id || null,
+      title: title?.trim() || "New Chat",
+    });
+
+    if (project?._id) {
+      await syncChatCount(project._id);
+    }
+
+    res.status(201).json(chat);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Unable to create chat" });
+  }
+};
+
+// PATCH /api/chat/:id/title — dedicated, validated title update.
+export const updateChatTitle = async (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ error: "Title is required" });
+    }
+
+    const updated = await Chat.findOneAndUpdate(
+      { _id: req.params.id, user: req.user._id },
+      { title: String(title).trim() },
+      { new: true, runValidators: true }
+    ).select("_id title updatedAt");
+
+    if (!updated) return res.status(404).json({ error: "Chat not found" });
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Unable to update title" });
+  }
+};
+
+// POST /api/chat/:id/pin and /unpin — toggles a chat's pinned state. Pinned
+// chats are sorted first (see getAllChats), always above unpinned ones,
+// regardless of how recently they were updated.
+async function setChatPinned(id, userId, pinned) {
+  return Chat.findOneAndUpdate(
+    { _id: id, user: userId },
+    { pinned: !!pinned },
+    { new: true }
+  ).select("_id title pinned updatedAt");
+}
+
+export const pinChat = async (req, res) => {
+  try {
+    const updated = await setChatPinned(req.params.id, req.user._id, req.body.pinned !== false);
+    if (!updated) return res.status(404).json({ error: "Chat not found" });
+    res.json(updated);
+  } catch (err) {
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Unable to pin chat" });
+  }
+};
+
+export const unpinChat = async (req, res) => {
+  try {
+    const updated = await setChatPinned(req.params.id, req.user._id, false);
+    if (!updated) return res.status(404).json({ error: "Chat not found" });
+    res.json(updated);
+  } catch (err) {
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Unable to unpin chat" });
+  }
+};
+
+// Public sharing — a chat exposes a stable `shareId` once it's ever been
+// shared, and `isShared` alone gates whether `/api/chat/shared/:shareId`
+// resolves it. That split means toggling share off then back on again
+// re-enables the *same* link (matching how e.g. Google Docs' "anyone with
+// the link" switch behaves) instead of silently rotating it.
+function generateShareId() {
+  // URL-safe, unpadded base64 — 16 random bytes gives ~2^128 of keyspace,
+  // comfortably collision-free without needing a retry loop.
+  return crypto.randomBytes(16).toString("base64url");
+}
+
+// GET /api/chat/:id/share — current sharing status, for the share panel to
+// render its initial state without needing the (much heavier) full chat doc.
+export const getChatShareStatus = async (req, res) => {
+  try {
+    const chat = await findOwnedChat(req.params.id, req.user._id, "_id isShared shareId");
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+    res.json({ isShared: !!chat.isShared, shareId: chat.isShared ? chat.shareId : null });
+  } catch (err) {
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Unable to load share status" });
+  }
+};
+
+// POST /api/chat/:id/share — idempotent: calling it again while already
+// shared just returns the existing link rather than minting a new one.
+export const shareChat = async (req, res) => {
+  try {
+    const chat = await findOwnedChat(req.params.id, req.user._id, "_id isShared shareId sharedAt");
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+
+    if (!chat.isShared) {
+      chat.isShared = true;
+      chat.sharedAt = new Date();
+      if (!chat.shareId) chat.shareId = generateShareId();
+      await chat.save();
+    }
+
+    res.json({ isShared: true, shareId: chat.shareId });
+  } catch (err) {
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+    // Vanishingly unlikely, but a unique-index collision on shareId would
+    // surface here — worth a clear error over a raw Mongo duplicate-key one.
+    if (err.code === 11000) {
+      return res.status(500).json({ error: "Unable to generate a unique share link, please try again" });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Unable to share chat" });
+  }
+};
+
+// POST /api/chat/:id/unshare — revokes public access. `shareId` is
+// deliberately left in place (see note above) so re-sharing later restores
+// the same URL instead of generating a new one.
+export const unshareChat = async (req, res) => {
+  try {
+    const updated = await Chat.findOneAndUpdate(
+      { _id: req.params.id, user: req.user._id },
+      { isShared: false },
+      { new: true }
+    ).select("_id isShared");
+    if (!updated) return res.status(404).json({ error: "Chat not found" });
+    res.json({ isShared: false });
+  } catch (err) {
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Unable to unshare chat" });
+  }
+};
+
+// GET /api/chat/shared/:shareId — PUBLIC, unauthenticated. Deliberately
+// returns a narrow, read-only projection: no `user` id, no `project` id, no
+// pin state — just what a public read-only viewer needs to render the
+// conversation. System-role messages (tool/internal scaffolding) are
+// stripped for the same reason the authenticated client already hides them.
+export const getSharedChat = async (req, res) => {
+  try {
+    const chat = await Chat.findOne({ shareId: req.params.shareId, isShared: true }).select(
+      "title messages sharedAt updatedAt"
+    );
+    if (!chat) return res.status(404).json({ error: "This shared conversation is unavailable." });
+
+    res.json({
+      title: chat.title,
+      messages: chat.messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({
+          role: m.role,
+          content: m.content,
+          attachments: m.attachments?.map((a) => ({
+            name: a.name,
+            mimeType: a.mimeType,
+            kind: a.kind,
+          })),
+        })),
+      sharedAt: chat.sharedAt,
+      updatedAt: chat.updatedAt,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Unable to load shared conversation" });
+  }
+};
+
+// POST /api/chat/:id/generate-title — auto-titling for the first user
+// message of a chat. Only *generates* the title (Gemini call); persisting it
+// is left to the existing, validated PATCH /api/chat/:id/title endpoint so
+// there is a single source of truth for writing a chat's title.
+//
+// Idempotent by design: once a chat has any non-default title, this becomes
+// a cheap no-op (`generated: false`) instead of calling the model again —
+// callers should treat a falsy `title` in the response as "nothing to save".
+export const generateChatTitleForChat = async (req, res) => {
+  try {
+    const chat = await findOwnedChat(req.params.id, req.user._id, "_id title messages");
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+
+    const existingTitle = (chat.title || "").trim();
+    if (existingTitle && existingTitle !== DEFAULT_CHAT_TITLE) {
+      return res.json({ title: existingTitle, generated: false });
+    }
+
+    const { message } = req.body;
+    const firstUserMessage =
+      (message && String(message).trim()) ||
+      chat.messages.find((m) => m.role === "user")?.content ||
+      "";
+
+    const title = await generateChatTitle(firstUserMessage);
+    res.json({ title, generated: true });
+  } catch (err) {
+    // Malformed id (e.g. stale/optimistic id) is a 404, not a server error.
+    if (err.name === "CastError") {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Unable to generate title" });
+  }
+};
+
 export const createOrUpdateChat = async (req, res) => {
-  const { messages, message, chatId, userEmail, userName, projectId } = req.body;
+  const {
+    messages,
+    message,
+    chatId,
+    projectId,
+    fileIds,
+    preferWebSearch,
+    model: requestedModel,
+    voiceMode,
+  } = req.body;
 
   // Smart Fallback: Agar frontend se array na aakar single message aaye, toh usko handle karo
   let formattedMessages = messages;
@@ -135,9 +424,6 @@ export const createOrUpdateChat = async (req, res) => {
       return res.status(400).json({ error: "Messages required" });
     }
   }
-
-  // Smart Fallback: Agar frontend email na bheje, toh dummy use karo error mat do
-  const targetEmail = userEmail || "admin@vani.ai";
 
   // Server-Sent Events: streamed token-by-token, unbuffered.
   res.writeHead(200, {
@@ -180,19 +466,34 @@ export const createOrUpdateChat = async (req, res) => {
   let aiReply = "";
 
   try {
-    // 1. User ko database mein dhoondho
-    let user = await User.findOne({ email: targetEmail });
+    // 1. Authenticated user only (req.user from requireAuth)
+    let user = await User.findById(req.user._id);
     if (!user) {
-      user = await User.create({
-        name: userName || "VANI User",
-        email: targetEmail,
-        provider: "google",
-      });
+      send({ error: "Authentication required" });
+      return;
     }
+
+    // If updating an existing chat, enforce ownership before streaming work.
+    let existingChat = null;
+    if (chatId) {
+      existingChat = await findOwnedChat(chatId, user._id, "_id model");
+      if (!existingChat) {
+        send({ error: "Chat not found" });
+        return;
+      }
+    }
+
+    // 1b. Resolve uploaded fileIds → attachment bytes/context (multi-file).
+    // Runs before project/RAG so file-aware prompts see the same attachments.
+    formattedMessages = await hydrateChatMessages(formattedMessages, {
+      fileIds,
+      ownerId: user._id,
+    });
 
     // 2. Resolve optional project + RAG / memory context
     let project = null;
     let projectExtras = "";
+    const lastUserMsg = formattedMessages[formattedMessages.length - 1] || {};
     if (projectId) {
       project = await getProjectForUser(projectId, user._id);
       if (!project) {
@@ -200,7 +501,6 @@ export const createOrUpdateChat = async (req, res) => {
         return;
       }
       await touchProject(project._id);
-      const lastUserMsg = formattedMessages[formattedMessages.length - 1] || {};
       const built = await buildProjectChatContext(project, lastUserMsg.content || "");
       projectExtras = built.systemExtras;
       if (built.ragContext) {
@@ -213,32 +513,125 @@ export const createOrUpdateChat = async (req, res) => {
       }
     }
 
+    // 2b. Long-term memory retrieval (cached, best-effort — never blocks forever)
+    let memoryExtras = "";
+    try {
+      const memoryBuilt = await Promise.race([
+        buildMemoryPromptExtras(user._id, lastUserMsg.content || ""),
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ extras: "", memories: [] }), 1200)
+        ),
+      ]);
+      memoryExtras = memoryBuilt?.extras || "";
+      if (memoryBuilt?.memories?.length) {
+        send({ memory: { used: true, count: memoryBuilt.memories.length } });
+      }
+    } catch (err) {
+      console.warn("Memory retrieve skipped:", err.message);
+    }
+
     // 3. Parse attachments → multimodal Gemini contents + DB-safe messages
+    //    (OCR / document parsers inject text; tools / search / memory unchanged)
     const { contents, persistedMessages } = await prepareMessages(formattedMessages);
     initTools();
 
     const lastUser = formattedMessages[formattedMessages.length - 1] || {};
+
+    // All conversation image attachments (hydrated) so edit tools can reach
+    // uploads from earlier turns, not only the latest message.
+    const conversationAttachments = [];
+    for (const message of formattedMessages) {
+      for (const att of message.attachments || []) {
+        if (!att) continue;
+        const mime = String(att.mimeType || "").toLowerCase();
+        const kind = String(att.kind || "").toLowerCase();
+        const isImage =
+          kind === "image" ||
+          mime.startsWith("image/") ||
+          /\.(jpe?g|png|webp|gif|heic|heif|bmp)$/i.test(att.name || "");
+        if (isImage) conversationAttachments.push(att);
+      }
+    }
+
+    // Generated images for this turn (persisted as owned uploads + message attachments).
+    const generatedAttachments = [];
+    let turnUsage = null;
+    let turnMeta = null;
+
+    // Model selection: request → chat sticky → project default → Gemini.
+    const projectModel = project?.settings?.model || null;
+    const chatModel = existingChat?.model || null;
+    const temperature =
+      typeof project?.settings?.temperature === "number"
+        ? project.settings.temperature
+        : undefined;
 
     // 4. Agentic stream: text before / during / after tool calls
     for await (const event of streamAgentReply({
       contents,
       userName: user.name,
       projectExtras,
+      memoryExtras,
+      preferWebSearch: !!preferWebSearch,
+      voiceMode: !!voiceMode,
+      model: requestedModel || undefined,
+      projectModel,
+      chatModel,
+      userMessage: lastUser.content || "",
+      temperature,
+      planId: req.plan?.planId || req.gate?.planId || null,
       toolContext: {
         userId: user._id,
         userEmail: user.email,
         userName: user.name,
         attachments: lastUser.attachments || [],
+        conversationAttachments,
         projectId: project?._id,
+        chatId: chatId || null,
       },
       signal: abortProxy,
     })) {
       if (clientClosed) break;
 
+      if (event.type === "meta") {
+        turnMeta = event;
+        send({
+          meta: {
+            model: event.model,
+            provider: event.provider,
+            modelKey: event.modelKey,
+            reason: event.reason,
+            displayName: event.displayName,
+            fallback: !!event.fallback,
+          },
+        });
+        continue;
+      }
+
+      if (event.type === "usage" && event.usage) {
+        turnUsage = event.usage;
+        send({ usage: event.usage });
+        continue;
+      }
+
       if (event.type === "delta" && event.text) {
+        // Strip OCR / image-metadata / base64 before anything reaches the client.
+        const cleaned = sanitizeAssistantDelta(event.text);
+        // Final-layer identity enforcement — fail-closed on every delta.
+        const identitySafe = cleaned
+          ? sanitizeIdentityResponse(cleaned, "")
+          : "";
+        if (!identitySafe && !event.replace) continue;
+
         // 🌟 Secret Tag ko stream mein leak hone se rokte hain 🌟
-        const safeText = tagFilter.push(event.text);
-        if (safeText) {
+        const safeText = identitySafe ? tagFilter.push(identitySafe) : "";
+        if (event.replace) {
+          // Fixed image-edit caption (or error) — discard any prior status /
+          // model prose so OCR never persists in the assistant message.
+          tagFilter.flush();
+          aiReply = safeText || identitySafe || "";
+          send({ delta: aiReply, replace: true });
+        } else if (safeText) {
           aiReply += safeText;
           send({ delta: safeText });
         }
@@ -271,46 +664,141 @@ export const createOrUpdateChat = async (req, res) => {
         continue;
       }
 
-      if (event.type === "image" && event.dataBase64) {
-        // Optional rich payload — current UI ignores unknown fields (UI unchanged).
-        send({
-          image: {
-            mimeType: event.mimeType,
-            dataBase64: event.dataBase64,
-            prompt: event.prompt,
-          },
-        });
+      if (event.type === "image" && (event.dataBase64 || event.fileId)) {
+        let fileId = event.fileId || null;
+        let size = event.size || 0;
+        let imageUrl = event.imageUrl || null;
+        try {
+          if (!fileId && event.dataBase64) {
+            const stored = await storeGeneratedImage({
+              ownerId: user._id,
+              base64: event.dataBase64,
+              mimeType: event.mimeType || "image/png",
+              prompt: event.prompt || "generated-image",
+            });
+            fileId = stored.id;
+            size = stored.size || 0;
+          }
+          if (fileId) {
+            imageUrl = imageUrl || `/api/files/${fileId}/content`;
+            generatedAttachments.push({
+              id: fileId,
+              fileId,
+              name: event.prompt || "Generated image",
+              mimeType: event.mimeType || "image/png",
+              size,
+              kind: "image",
+            });
+          }
+        } catch (persistErr) {
+          console.warn(
+            "[chat] failed to persist generated image:",
+            persistErr?.message || persistErr
+          );
+        }
+
+        // Never stream PNG bytes or base64 into the SSE payload — fileId/url only.
+        if (fileId) {
+          send({
+            image: {
+              mimeType: event.mimeType || "image/png",
+              prompt: event.prompt,
+              fileId,
+              size,
+              imageUrl,
+              success: true,
+            },
+          });
+        } else if (event.dataBase64) {
+          // Last-resort fallback when persistence failed — still avoid putting
+          // raw binary strings in assistant text deltas.
+          send({
+            image: {
+              mimeType: event.mimeType || "image/png",
+              dataBase64: event.dataBase64,
+              prompt: event.prompt,
+              size,
+            },
+          });
+        }
       }
     }
 
     if (!clientClosed) {
       const trailing = tagFilter.flush();
       if (trailing) {
-        aiReply += trailing;
-        send({ delta: trailing });
+        const safeTrailing = sanitizeIdentityResponse(trailing, "");
+        if (safeTrailing) {
+          aiReply += safeTrailing;
+          send({ delta: safeTrailing });
+        }
       }
     }
 
-    // Database mein User ka naam hamesha ke liye Update kar diya (agar tag mila)
+    // Absolute last identity pass before persist / client finalization.
+    const identityFinal = sanitizeIdentityResponse(
+      aiReply,
+      lastUser?.content || ""
+    );
+    if (identityFinal !== aiReply) {
+      aiReply = identityFinal;
+      if (!clientClosed) send({ delta: aiReply, replace: true });
+    }
+
+    // Preferred chat name → profile only. Authenticated user.name stays session/JWT-synced.
     if (tagFilter.name) {
-      user = await User.findByIdAndUpdate(user._id, { name: tagFilter.name }, { new: true });
+      user = await User.findByIdAndUpdate(
+        user._id,
+        { "profile.preferredName": tagFilter.name },
+        { new: true }
+      );
     }
 
     // 5. Chat ko save karo — attachments metadata only (no base64)
     let chat;
-    if (aiReply) {
-      const updatedMessages = [...persistedMessages, { role: "assistant", content: aiReply }];
+    if (aiReply || generatedAttachments.length) {
+      const assistantMessage = {
+        role: "assistant",
+        content: aiReply || "Here is the generated image.",
+        ...(generatedAttachments.length
+          ? { attachments: generatedAttachments }
+          : {}),
+        ...(turnMeta || turnUsage
+          ? {
+              meta: {
+                model: turnMeta?.modelKey || turnUsage?.modelKey,
+                provider: turnMeta?.provider || turnUsage?.provider,
+                inputTokens: turnUsage?.inputTokens,
+                outputTokens: turnUsage?.outputTokens,
+                costUsd: turnUsage?.costUsd,
+                latencyMs: turnUsage?.latencyMs,
+              },
+            }
+          : {}),
+      };
+      const updatedMessages = [...persistedMessages, assistantMessage];
+
+      const assistantContent = assistantMessage.content;
+      const stickyModel =
+        requestedModel && requestedModel !== "auto"
+          ? requestedModel
+          : turnMeta?.modelKey || undefined;
 
       if (chatId) {
-        chat = await Chat.findByIdAndUpdate(
-          chatId,
+        chat = await Chat.findOneAndUpdate(
+          { _id: chatId, user: user._id },
           {
             messages: updatedMessages,
-            lastMessage: aiReply,
+            lastMessage: assistantContent,
             ...(project ? { project: project._id } : {}),
+            ...(stickyModel ? { model: stickyModel } : {}),
           },
           { new: true }
         );
+        if (!chat) {
+          send({ error: "Chat not found" });
+          return;
+        }
       } else {
         const lastPersisted = persistedMessages[persistedMessages.length - 1];
         const lastUserMsg =
@@ -321,13 +809,30 @@ export const createOrUpdateChat = async (req, res) => {
           project: project?._id || null,
           title,
           messages: updatedMessages,
-          lastMessage: aiReply,
+          lastMessage: assistantContent,
+          model: stickyModel || "gemini",
         });
       }
 
       if (project?._id) {
         await syncChatCount(project._id);
       }
+
+      // 6. Background auto-memory — never blocks the SSE response
+      const persistedChatId = chat?._id;
+      const captureMessages = [
+        ...persistedMessages,
+        { role: "assistant", content: assistantContent },
+      ];
+      setImmediate(() => {
+        autoCaptureFromChat({
+          userId: user._id,
+          chatId: persistedChatId,
+          messages: captureMessages,
+          userMessage: lastUser.content || "",
+          assistantReply: assistantContent,
+        }).catch((err) => console.warn("Auto memory capture failed:", err.message));
+      });
     }
 
     send({ done: true, chatId: chat?._id, projectId: project?._id || null });

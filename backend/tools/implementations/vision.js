@@ -1,38 +1,6 @@
 import { CHAT_MODEL, getGeminiClient } from "../../services/geminiClient.js";
-
-function collectImageParts(contents = [], attachments = []) {
-  const parts = [];
-
-  for (const content of contents) {
-    for (const part of content.parts || []) {
-      const mime = part?.inlineData?.mimeType || "";
-      if (mime.startsWith("image/")) {
-        parts.push({
-          inlineData: {
-            mimeType: mime,
-            data: part.inlineData.data,
-          },
-        });
-      }
-    }
-  }
-
-  // Fallback: attachments that still carry base64 (current turn)
-  if (!parts.length) {
-    for (const att of attachments) {
-      if (att?.kind === "image" && att.dataBase64) {
-        parts.push({
-          inlineData: {
-            mimeType: att.mimeType || "image/jpeg",
-            data: att.dataBase64,
-          },
-        });
-      }
-    }
-  }
-
-  return parts.slice(0, 8);
-}
+import { VANI_IDENTITY_PREFIX } from "../../services/identity.js";
+import { collectImageParts } from "./imageParts.js";
 
 export const visionTool = {
   id: "vision",
@@ -89,7 +57,7 @@ export const visionTool = {
             role: "user",
             parts: [
               {
-                text: `You are VANI Vision. Analyze the attached image(s) with extreme care.\nFocus: ${focus}\nGround every claim in what is visible. If something is unreadable, say so.`,
+                text: `${VANI_IDENTITY_PREFIX}\nYou are VANI AI Vision. Analyze the attached image(s) with extreme care.\nFocus: ${focus}\nGround every claim in what is visible. If something is unreadable, say so.`,
               },
               ...selected,
             ],

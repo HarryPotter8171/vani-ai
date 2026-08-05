@@ -6,9 +6,51 @@ import {
   getTool,
   initTools,
 } from "../tools/index.js";
+import { modelRouter } from "../router/index.ts";
+import { runMultiProviderAgent } from "./multiProviderAgent.js";
+import {
+  detectImageToolIntent,
+  normalizeImageToolFailure,
+} from "./imageToolIntent.js";
+import {
+  hasEditableImages,
+  runDirectImageEdit,
+  shouldForceImageEdit,
+} from "./imageEditPipeline.js";
+import {
+  hasOcrableInputs,
+  runDirectOcr,
+  shouldForceOcr,
+} from "./ocrPipeline.js";
+import { detectOcrToolIntent } from "./ocrToolIntent.js";
+import { IMAGE_EDIT_SUCCESS_CAPTION } from "./image/index.js";
 
 const MAX_TOOL_ROUNDS = 6;
 const MAX_PARALLEL_TOOLS = 5;
+const IMAGE_TOOLS = new Set(["image_generation", "image_edit"]);
+
+/** True when the resolved route should use the legacy Gemini-native loop. */
+function shouldUseNativeGemini(model, projectModel, chatModel, planId = null) {
+  // Explicit non-gemini / auto → multi-provider path.
+  const explicit = model || chatModel || projectModel;
+  if (explicit === "auto") return false;
+  if (explicit && explicit !== "gemini" && !String(explicit).startsWith("gemini/")) {
+    return false;
+  }
+  if (process.env.VANI_AUTO_ROUTE === "true" && !model) return false;
+
+  try {
+    const decision = modelRouter.resolve({
+      model: model || "gemini",
+      projectModel,
+      chatModel,
+      planId,
+    });
+    return decision.model.provider === "gemini";
+  } catch {
+    return true; // safest: keep historical Gemini path
+  }
+}
 
 function contentsHaveVision(contents) {
   return contents.some((c) =>
@@ -23,16 +65,24 @@ function contentsHaveVision(contents) {
 function sanitizeToolResultForModel(name, result) {
   if (!result || typeof result !== "object") return { ok: true, data: result };
 
+  if (IMAGE_TOOLS.has(name) && result.ok === false) {
+    return normalizeImageToolFailure(result, name);
+  }
+
   // Keep context lean — never echo giant base64 blobs back into the model.
-  if (name === "image_generation" && result.imageBase64) {
+  if (IMAGE_TOOLS.has(name) && (result.imageBase64 || result.fileId || result.imageUrl)) {
     const { imageBase64, ...rest } = result;
     return {
       ...rest,
       imageGenerated: true,
-      imageBytes: imageBase64.length,
+      ...(typeof imageBase64 === "string"
+        ? { imageBytes: imageBase64.length }
+        : result.size
+          ? { imageBytes: result.size }
+          : {}),
       note:
         rest.note ||
-        "Image generated successfully. Tell the user the image is ready; do not reprint base64.",
+        "Image ready. Tell the user the image is ready; do not reprint base64.",
     };
   }
 
@@ -46,6 +96,23 @@ function sanitizeToolResultForModel(name, result) {
     };
   }
   return result;
+}
+
+function buildGeminiToolConfig(declarations, forceToolName, round) {
+  if (!declarations.length) return undefined;
+  if (forceToolName && round === 0) {
+    return {
+      functionCallingConfig: {
+        mode: FunctionCallingConfigMode.ANY,
+        allowedFunctionNames: [forceToolName],
+      },
+    };
+  }
+  return {
+    functionCallingConfig: {
+      mode: FunctionCallingConfigMode.AUTO,
+    },
+  };
 }
 
 function collectFunctionCallsFromChunk(chunk, bucket) {
@@ -74,22 +141,179 @@ function collectFunctionCallsFromChunk(chunk, bucket) {
  * - emits tool_start / tool_done during execution
  * - streams the merged final answer after tools return
  *
+ * Default path (Gemini / legacy `model: "gemini"`) is byte-compatible with
+ * the pre-orchestrator implementation. Non-Gemini selections and `auto`
+ * route through `runMultiProviderAgent`.
+ *
  * Yields:
  *   { type: 'delta', text }
  *   { type: 'tool_start', id, name, displayName }
  *   { type: 'tool_done', id, name, displayName, ok, error? }
  *   { type: 'image', mimeType, dataBase64, prompt? }
+ *   { type: 'meta' | 'usage', ... }  (orchestrator; additive)
  */
 export async function* runToolAgent({
   contents,
   systemInstruction,
   toolContext = {},
   signal,
+  model,
+  projectModel,
+  chatModel,
+  userMessage = "",
+  temperature,
+  planId = null,
 }) {
+  if (!shouldUseNativeGemini(model, projectModel, chatModel, planId)) {
+    yield* runMultiProviderAgent({
+      contents,
+      systemInstruction,
+      toolContext,
+      signal,
+      model,
+      projectModel,
+      chatModel,
+      userMessage,
+      temperature,
+      planId,
+    });
+    return;
+  }
+
   initTools();
   const declarations = getFunctionDeclarations();
   const workingContents = [...contents];
   const hasVision = contentsHaveVision(workingContents);
+  const hasImages = hasEditableImages(workingContents, toolContext);
+  const hasOcrable = hasOcrableInputs(workingContents, toolContext);
+  const imageIntent = detectImageToolIntent(userMessage, { hasImages });
+  const ocrIntent = detectOcrToolIntent(userMessage, { hasOcrable });
+  const forceDirectOcr = shouldForceOcr(
+    userMessage,
+    workingContents,
+    toolContext
+  );
+  const forceDirectEdit =
+    !forceDirectOcr &&
+    shouldForceImageEdit(userMessage, workingContents, toolContext);
+
+  let forceImageTool = null;
+  if (!forceDirectEdit && !forceDirectOcr) {
+    if (
+      ocrIntent?.mode === "force" &&
+      declarations.some((d) => d.name === "ocr")
+    ) {
+      forceImageTool = "ocr";
+    } else if (
+      imageIntent?.mode === "force" &&
+      declarations.some((d) => d.name === imageIntent.tool)
+    ) {
+      forceImageTool = imageIntent.tool;
+    }
+  }
+
+  // Additive meta for the default Gemini path (UI can show provider badge).
+  const decision = modelRouter.resolve({
+    model: model || "gemini",
+    projectModel,
+    chatModel,
+    planId,
+  });
+  const resolved = decision.model;
+  const geminiModelId = resolved.id || CHAT_MODEL;
+  yield {
+    type: "meta",
+    model: resolved.id,
+    provider: "gemini",
+    modelKey: resolved.key,
+    reason: decision.reason || "default_gemini",
+    displayName: resolved.displayName,
+  };
+
+  const started = performance.now();
+
+  // OCR: run first, inject results, then continue so the LLM can summarize/answer.
+  if (forceDirectOcr) {
+    const ocrRunner = runDirectOcr({
+      userMessage,
+      contents: workingContents,
+      toolContext,
+      signal,
+    });
+    let ocrOutcome = null;
+    while (true) {
+      const next = await ocrRunner.next();
+      if (next.done) {
+        ocrOutcome = next.value;
+        break;
+      }
+      yield next.value;
+    }
+
+    if (ocrOutcome?.modelParts?.length && ocrOutcome?.responseParts?.length) {
+      workingContents.push({ role: "model", parts: ocrOutcome.modelParts });
+      workingContents.push({ role: "user", parts: ocrOutcome.responseParts });
+    }
+
+    if (!ocrOutcome?.ok) {
+      yield {
+        type: "delta",
+        text: `\n\n${ocrOutcome?.result?.error || "The OCR service is temporarily unavailable."}`,
+        replace: true,
+      };
+      yield {
+        type: "usage",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          costUsd: 0,
+          latencyMs: Math.round(performance.now() - started),
+          provider: "gemini",
+          model: resolved.id,
+          modelKey: resolved.key,
+        },
+      };
+      return;
+    }
+    // Fall through to the LLM loop with OCR context injected.
+  }
+
+  // Image edit: invoke the tool immediately — never let the LLM refuse in text.
+  if (forceDirectEdit) {
+    const editRunner = runDirectImageEdit({
+      userMessage,
+      contents: workingContents,
+      toolContext,
+      signal,
+    });
+    let editOutcome = null;
+    while (true) {
+      const next = await editRunner.next();
+      if (next.done) {
+        editOutcome = next.value;
+        break;
+      }
+      yield next.value;
+    }
+
+    // Caption (success or failure) is already yielded by runDirectImageEdit.
+    // Never ask the LLM to describe the edit — it echoes OCR / metadata.
+    yield {
+      type: "usage",
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0,
+        latencyMs: Math.round(performance.now() - started),
+        provider: "gemini",
+        model: resolved.id,
+        modelKey: resolved.key,
+      },
+    };
+    return;
+  }
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     if (signal?.aborted) return;
@@ -98,20 +322,14 @@ export async function* runToolAgent({
     let streamedText = "";
 
     const stream = await getGeminiClient().models.generateContentStream({
-      model: CHAT_MODEL,
+      model: geminiModelId,
       contents: workingContents,
       config: {
         systemInstruction,
         tools: declarations.length
           ? [{ functionDeclarations: declarations }]
           : undefined,
-        toolConfig: declarations.length
-          ? {
-              functionCallingConfig: {
-                mode: FunctionCallingConfigMode.AUTO,
-              },
-            }
-          : undefined,
+        toolConfig: buildGeminiToolConfig(declarations, forceImageTool, round),
       },
     });
 
@@ -131,6 +349,19 @@ export async function* runToolAgent({
 
     // No tool calls → this turn is the final natural-language answer.
     if (!calls.length) {
+      yield {
+        type: "usage",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          costUsd: 0,
+          latencyMs: Math.round(performance.now() - started),
+          provider: "gemini",
+          model: resolved.id,
+          modelKey: resolved.key,
+        },
+      };
       return;
     }
 
@@ -165,41 +396,106 @@ export async function* runToolAgent({
     for (const fc of calls) {
       if (signal?.aborted) return;
 
-      const tool = getTool(fc.name);
-      const displayName = tool?.displayName || fc.name;
-      const callId = fc.id || fc.name;
+      // Last-resort guard: if the LLM still picks image_generation while a
+      // source image is present, rewrite to image_edit so bytes are not dropped.
+      let toolName = fc.name;
+      let toolArgs = fc.args || {};
+      if (
+        toolName === "image_generation" &&
+        hasEditableImages(workingContents, toolContext)
+      ) {
+        console.warn(
+          "[image_trace] orchestrator rewrite image_generation→image_edit reason=source_present"
+        );
+        toolName = "image_edit";
+        toolArgs = {
+          instruction:
+            (typeof toolArgs.prompt === "string" && toolArgs.prompt.trim()) ||
+            (typeof toolArgs.instruction === "string" &&
+              toolArgs.instruction.trim()) ||
+            String(userMessage || "").trim() ||
+            "Edit this image as requested.",
+          ...(typeof toolArgs.imageFileId === "string"
+            ? { imageFileId: toolArgs.imageFileId }
+            : {}),
+        };
+      }
+
+      const tool = getTool(toolName);
+      const displayName = tool?.displayName || toolName;
+      const callId = fc.id || toolName;
 
       yield {
         type: "tool_start",
         id: callId,
-        name: fc.name,
+        name: toolName,
         displayName,
       };
 
-      const rawResult = await executeTool(fc.name, fc.args || {}, ctx);
+      let rawResult = await executeTool(toolName, toolArgs, ctx);
+      if (IMAGE_TOOLS.has(toolName) && rawResult?.ok === false) {
+        rawResult = normalizeImageToolFailure(rawResult, toolName);
+      }
       const ok = rawResult?.ok !== false;
 
-      if (fc.name === "image_generation" && rawResult?.ok && rawResult.imageBase64) {
+      if (
+        IMAGE_TOOLS.has(toolName) &&
+        rawResult?.ok &&
+        (rawResult.imageBase64 || rawResult.fileId || rawResult.imageUrl)
+      ) {
         yield {
           type: "image",
           mimeType: rawResult.mimeType || "image/png",
-          dataBase64: rawResult.imageBase64,
-          prompt: rawResult.prompt,
+          ...(rawResult.fileId ? { fileId: rawResult.fileId } : {}),
+          ...(rawResult.imageUrl ? { imageUrl: rawResult.imageUrl } : {}),
+          ...(rawResult.size ? { size: rawResult.size } : {}),
+          ...(!rawResult.fileId && rawResult.imageBase64
+            ? { dataBase64: rawResult.imageBase64 }
+            : {}),
+          prompt: rawResult.prompt || rawResult.instruction,
         };
       }
 
       yield {
         type: "tool_done",
         id: callId,
-        name: fc.name,
+        name: toolName,
         displayName,
         ok,
         error: ok ? undefined : rawResult?.error,
       };
 
+      // Successful image_edit: fixed caption only — do not let the model
+      // continue and dump OCR / metadata into the assistant reply.
+      if (
+        toolName === "image_edit" &&
+        ok &&
+        (rawResult?.imageBase64 || rawResult?.fileId || rawResult?.imageUrl)
+      ) {
+        yield {
+          type: "delta",
+          text: IMAGE_EDIT_SUCCESS_CAPTION,
+          replace: true,
+        };
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            costUsd: 0,
+            latencyMs: Math.round(performance.now() - started),
+            provider: "gemini",
+            model: resolved.id,
+            modelKey: resolved.key,
+          },
+        };
+        return;
+      }
+
       const responsePayload = {
-        name: fc.name,
-        response: sanitizeToolResultForModel(fc.name, rawResult),
+        name: toolName,
+        response: sanitizeToolResultForModel(toolName, rawResult),
       };
       if (fc.id) responsePayload.id = fc.id;
 
@@ -225,7 +521,7 @@ export async function* runToolAgent({
   });
 
   const finalStream = await getGeminiClient().models.generateContentStream({
-    model: CHAT_MODEL,
+    model: geminiModelId,
     contents: workingContents,
     config: {
       systemInstruction,
@@ -240,4 +536,18 @@ export async function* runToolAgent({
     const text = chunk.text;
     if (text) yield { type: "delta", text };
   }
+
+  yield {
+    type: "usage",
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      latencyMs: Math.round(performance.now() - started),
+      provider: "gemini",
+      model: resolved.id,
+      modelKey: resolved.key,
+    },
+  };
 }

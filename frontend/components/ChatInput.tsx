@@ -1,43 +1,140 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Paperclip, Mic, ArrowUp, Square, Camera } from 'lucide-react';
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  memo,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { Mic, ArrowUp, Square, Upload, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import AttachmentPreview from '@/components/chat/AttachmentPreview';
-import {
-  ACCEPT_ATTRIBUTE,
-  IMAGE_ACCEPT_ATTRIBUTE,
-  createLocalId,
-  getAttachmentKind,
-  readFileAsBase64,
-  resolveMimeType,
-  validateIncomingFiles,
-} from '@/lib/files';
-import { ensureImageFileName, isVisionImageFile, optimizeImageForVision } from '@/lib/vision';
+import AttachmentLightbox from '@/components/chat/AttachmentLightbox';
+import ComposerPlusMenu from '@/components/chat/ComposerPlusMenu';
+import { useFileUpload } from '@/hooks/useFileUpload';
+import { ACCEPT_ATTRIBUTE, IMAGE_ACCEPT_ATTRIBUTE } from '@/lib/files';
 import type { MessageAttachment, PendingAttachment } from '@/lib/types';
+import type { AgentTypeId, AgentTypeInfo } from '@/lib/agents';
+
+const AgentSelector = dynamic(() => import('@/components/agents/AgentSelector'), {
+  ssr: false,
+  loading: () => null,
+});
+
+const ModelSelector = dynamic(() => import('@/components/models/ModelSelector'), {
+  ssr: false,
+  loading: () => null,
+});
+
+export interface ChatInputHandle {
+  ingestFiles: (files: FileList | File[], source?: 'drop' | 'upload' | 'paste') => void;
+}
 
 export interface ChatInputProps {
   onSendMessage: (message: string, attachments?: MessageAttachment[]) => void;
   isLoading?: boolean;
   onStopGenerating?: () => void;
+  onOpenVoiceMode?: () => void;
+  /** Open / create a Canvas workspace from the + menu. */
+  onOpenCanvas?: () => void;
+  /** Reports the floating composer shell height so the chat pane can clear it. */
+  onHeightChange?: (height: number) => void;
+  /** Optional agent selector — omit to hide Agents control. */
+  agents?: AgentTypeInfo[];
+  selectedAgent?: AgentTypeId | null;
+  onSelectAgent?: (id: AgentTypeId | null) => void;
+  /** Web Search / Deep Research mode toggles. */
+  webSearchEnabled?: boolean;
+  deepResearchEnabled?: boolean;
+  onToggleWebSearch?: (value: boolean) => void;
+  onToggleDeepResearch?: (value: boolean) => void;
+  /** Model orchestrator selector. */
+  selectedModel?: string;
+  onSelectModel?: (modelKey: string) => void;
+  projectDefaultModel?: string | null;
+  /** Optional AI Dock / productivity strip rendered above the composer. */
+  dock?: React.ReactNode;
+  /**
+   * When provided, file drops show contextual actions instead of attaching
+   * immediately. Caller receives the FileList and must handle ingestion.
+   */
+  onFilesDropped?: (files: FileList) => void;
 }
 
-const MAX_TEXTAREA_HEIGHT = 160;
-const MIN_TEXTAREA_HEIGHT = 24;
+const MAX_TEXTAREA_HEIGHT = 120;
+const MIN_TEXTAREA_HEIGHT = 22;
 
-type IngestSource = 'upload' | 'paste' | 'camera' | 'drop';
-
-export default function ChatInput({ onSendMessage, isLoading, onStopGenerating }: ChatInputProps) {
+const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+  {
+  onSendMessage,
+  isLoading,
+  onStopGenerating,
+  onOpenVoiceMode,
+  onOpenCanvas,
+  onHeightChange,
+  agents,
+  selectedAgent = null,
+  onSelectAgent,
+  webSearchEnabled = false,
+  deepResearchEnabled = false,
+  onToggleWebSearch,
+  onToggleDeepResearch,
+  selectedModel = 'auto',
+  onSelectModel,
+  projectDefaultModel = null,
+  dock,
+  onFilesDropped,
+},
+  ref
+) {
   const [input, setInput] = useState('');
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [attachError, setAttachError] = useState<string | null>(null);
-  const [showCamera, setShowCamera] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const abortMapRef = useRef<Map<string, AbortController>>(new Map());
   const dragDepthRef = useRef(0);
+
+  const {
+    attachments,
+    ingestFiles,
+    removeAttachment,
+    cancelAttachment,
+    retryAttachment,
+    reorderAttachments,
+    takeReadyAttachments,
+    isReading,
+    hasReady,
+  } = useFileUpload();
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      ingestFiles: (files, source = 'drop') => {
+        void ingestFiles(files, source);
+      },
+    }),
+    [ingestFiles]
+  );
+
+  const previewAttachment =
+    previewId === null ? null : (attachments.find((a) => a.id === previewId) ?? null);
+
+  const openPreview = useCallback((attachment: PendingAttachment) => {
+    setPreviewId(attachment.id);
+  }, []);
+
+  const closePreview = useCallback(() => {
+    setPreviewId(null);
+  }, []);
 
   const resizeTextarea = useCallback(() => {
     const el = textareaRef.current;
@@ -54,190 +151,26 @@ export default function ChatInput({ onSendMessage, isLoading, onStopGenerating }
     resizeTextarea();
   }, [input, resizeTextarea]);
 
-  // Camera capture is a mobile / touch affordance — keep desktop chrome unchanged.
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(pointer: coarse)');
-    const sync = () => setShowCamera(mq.matches);
-    sync();
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
-  }, []);
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el || !onHeightChange) return;
 
-  useEffect(() => {
-    return () => {
-      abortMapRef.current.forEach((c) => c.abort());
-      abortMapRef.current.clear();
-      attachments.forEach((a) => {
-        if (a.previewUrl?.startsWith('blob:')) URL.revokeObjectURL(a.previewUrl);
-      });
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- cleanup on unmount only
-  }, []);
+    const report = () => onHeightChange(el.getBoundingClientRect().height);
+    report();
 
-  const showAttachError = useCallback((message: string) => {
-    setAttachError(message);
-    window.setTimeout(() => setAttachError(null), 4200);
-  }, []);
-
-  const ingestFiles = useCallback(
-    async (fileList: File[] | FileList, source: IngestSource = 'upload') => {
-      const incoming = Array.from(fileList).map((file) => {
-        if (isVisionImageFile(file)) {
-          return ensureImageFileName(
-            file,
-            source === 'paste' ? 'paste' : source === 'camera' ? 'camera' : 'upload'
-          );
-        }
-        return file;
-      });
-      if (incoming.length === 0) return;
-
-      setAttachments((prev) => {
-        const existingTotal = prev.reduce((sum, a) => sum + a.size, 0);
-        const { accepted, errors } = validateIncomingFiles(incoming, prev.length, existingTotal);
-        if (errors.length) showAttachError(errors[0]);
-        if (accepted.length === 0) return prev;
-
-        const pending: PendingAttachment[] = accepted.map((file) => {
-          const kind = getAttachmentKind(file);
-          const mimeType = resolveMimeType(file, kind);
-          const id = createLocalId();
-          return {
-            id,
-            name: file.name,
-            mimeType,
-            size: file.size,
-            kind,
-            status: 'reading' as const,
-            progress: 0,
-            previewUrl: kind === 'image' ? URL.createObjectURL(file) : undefined,
-          };
-        });
-
-        queueMicrotask(() => {
-          pending.forEach((item, index) => {
-            const file = accepted[index];
-            const controller = new AbortController();
-            abortMapRef.current.set(item.id, controller);
-
-            const run =
-              item.kind === 'image'
-                ? optimizeImageForVision(
-                    file,
-                    (percent) => {
-                      setAttachments((curr) =>
-                        curr.map((a) => (a.id === item.id ? { ...a, progress: percent } : a))
-                      );
-                    },
-                    controller.signal
-                  ).then((optimized) => {
-                    setAttachments((curr) =>
-                      curr.map((a) => {
-                        if (a.id !== item.id) return a;
-                        if (a.previewUrl?.startsWith('blob:')) URL.revokeObjectURL(a.previewUrl);
-                        return {
-                          ...a,
-                          status: 'ready' as const,
-                          progress: 100,
-                          dataBase64: optimized.dataBase64,
-                          mimeType: optimized.mimeType,
-                          size: optimized.size,
-                          name: optimized.name,
-                          previewUrl: optimized.previewUrl,
-                        };
-                      })
-                    );
-                  })
-                : readFileAsBase64(
-                    file,
-                    (percent) => {
-                      setAttachments((curr) =>
-                        curr.map((a) => (a.id === item.id ? { ...a, progress: percent } : a))
-                      );
-                    },
-                    controller.signal
-                  ).then((dataBase64) => {
-                    setAttachments((curr) =>
-                      curr.map((a) =>
-                        a.id === item.id
-                          ? { ...a, status: 'ready' as const, progress: 100, dataBase64 }
-                          : a
-                      )
-                    );
-                  });
-
-            run
-              .catch((err: Error) => {
-                if (err.name === 'AbortError') {
-                  setAttachments((curr) => {
-                    const target = curr.find((a) => a.id === item.id);
-                    if (target?.previewUrl?.startsWith('blob:')) {
-                      URL.revokeObjectURL(target.previewUrl);
-                    }
-                    return curr.filter((a) => a.id !== item.id);
-                  });
-                  return;
-                }
-                setAttachments((curr) =>
-                  curr.map((a) =>
-                    a.id === item.id
-                      ? { ...a, status: 'error', error: 'Couldn’t prepare this image' }
-                      : a
-                  )
-                );
-              })
-              .finally(() => {
-                abortMapRef.current.delete(item.id);
-              });
-          });
-        });
-
-        return [...prev, ...pending];
-      });
-    },
-    [showAttachError]
-  );
-
-  const removeAttachment = useCallback((id: string) => {
-    abortMapRef.current.get(id)?.abort();
-    abortMapRef.current.delete(id);
-    setAttachments((prev) => {
-      const target = prev.find((a) => a.id === id);
-      if (target?.previewUrl?.startsWith('blob:')) URL.revokeObjectURL(target.previewUrl);
-      return prev.filter((a) => a.id !== id);
-    });
-  }, []);
-
-  const cancelAttachment = useCallback(
-    (id: string) => {
-      removeAttachment(id);
-    },
-    [removeAttachment]
-  );
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [onHeightChange]);
 
   const submit = () => {
-    const ready = attachments.filter((a) => a.status === 'ready' && a.dataBase64);
-    const reading = attachments.some((a) => a.status === 'reading');
-    if (isLoading || reading) return;
-    if (!input.trim() && ready.length === 0) return;
+    if (isLoading || isReading) return;
+    if (!input.trim() && !hasReady) return;
 
-    const payload: MessageAttachment[] = ready.map(
-      ({ id, name, mimeType, size, kind, previewUrl, dataBase64 }) => ({
-        id,
-        name,
-        mimeType,
-        size,
-        kind,
-        previewUrl,
-        dataBase64,
-      })
-    );
-
-    onSendMessage(input.trim(), payload.length ? payload : undefined);
+    const ready = takeReadyAttachments();
+    onSendMessage(input.trim(), ready.length ? ready : undefined);
     setInput('');
-    setAttachments([]);
-    abortMapRef.current.clear();
+    setPreviewId(null);
     requestAnimationFrame(() => {
       if (textareaRef.current) {
         textareaRef.current.style.height = `${MIN_TEXTAREA_HEIGHT}px`;
@@ -299,6 +232,7 @@ export default function ChatInput({ onSendMessage, isLoading, onStopGenerating }
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -307,178 +241,299 @@ export default function ChatInput({ onSendMessage, isLoading, onStopGenerating }
     dragDepthRef.current = 0;
     setIsDragging(false);
     if (e.dataTransfer.files?.length) {
-      void ingestFiles(e.dataTransfer.files, 'drop');
+      if (onFilesDropped) {
+        onFilesDropped(e.dataTransfer.files);
+      } else {
+        void ingestFiles(e.dataTransfer.files, 'drop');
+      }
     }
   };
 
-  const hasReadyAttachments = attachments.some((a) => a.status === 'ready');
-  const isReading = attachments.some((a) => a.status === 'reading');
-  const canSend =
-    (input.trim().length > 0 || hasReadyAttachments) && !isLoading && !isReading;
+  const canSend = (input.trim().length > 0 || hasReady) && !isLoading && !isReading;
 
   const controlBtnClass = cn(
-    'hover-lift flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
-    'text-muted-foreground/75',
-    'transition-colors duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
-    'hover:bg-black/[0.045] hover:text-foreground',
-    'dark:hover:bg-white/[0.07] dark:hover:text-[#f5f5f7]',
+    'hover-lift flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+    'text-muted-foreground/70',
+    'transition-all duration-normal ease-out',
+    'hover:bg-surface-hover hover:text-foreground',
     'disabled:cursor-not-allowed disabled:opacity-40'
   );
 
+  const enableWebSearch = (v: boolean) => {
+    onToggleWebSearch?.(v);
+    if (v) onSelectAgent?.(null);
+  };
+
+  const enableDeepResearch = (v: boolean) => {
+    onToggleDeepResearch?.(v);
+    if (v) onSelectAgent?.(null);
+  };
+
+  const hasExtra =
+    attachments.length > 0 || webSearchEnabled || deepResearchEnabled;
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-6 sm:px-5 sm:pb-7 md:px-6 md:pb-8">
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-background via-background/80 to-transparent" />
+    <>
+      <div
+        ref={rootRef}
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] sm:px-5 sm:pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] md:px-6"
+      >
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-background via-background/75 to-transparent" />
 
-      <div className="pointer-events-auto relative w-full max-w-[860px]">
-        {attachError && (
-          <div
+        <div className="pointer-events-auto relative w-full max-w-[760px]">
+          {dock}
+          <form
+            onSubmit={handleSubmit}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
             className={cn(
-              'mb-2 rounded-[14px] px-3.5 py-2 text-[12.5px] tracking-[-0.01em]',
-              'bg-red-500/10 text-red-600 dark:text-red-400',
-              'ring-1 ring-red-500/20 backdrop-blur-xl'
+              'relative flex w-full flex-col',
+              hasExtra ? 'rounded-[28px]' : 'rounded-full',
+              'bg-surface-input',
+              'backdrop-blur-[var(--blur-glass)] backdrop-saturate-[1.8]',
+              'border border-border',
+              'shadow-2',
+              'transition-[background-color,box-shadow,border-color,border-radius] duration-normal ease-apple',
+              'focus-within:border-accent/35 focus-within:shadow-focus',
+              isDragging && 'border-accent/45 bg-accent-muted shadow-focus'
             )}
-            role="alert"
           >
-            {attachError}
-          </div>
-        )}
+            <AnimatePresence>
+              {isDragging && (
+                <motion.div
+                  key="drag-overlay"
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                  className={cn(
+                    'pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2.5',
+                    'rounded-[inherit]',
+                    'dnd-overlay backdrop-blur-[4px]'
+                  )}
+                >
+                  <motion.div
+                    animate={{ y: [0, -3, 0] }}
+                    transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+                    className={cn(
+                      'flex h-11 w-11 items-center justify-center rounded-full',
+                      'bg-accent text-text-on-accent shadow-2'
+                    )}
+                  >
+                    <Upload size={18} strokeWidth={2.25} />
+                  </motion.div>
+                  <div className="text-center">
+                    <p className="text-[13.5px] font-semibold tracking-[-0.015em] text-accent">
+                      Drop to attach
+                    </p>
+                    <p className="mt-0.5 text-[11.5px] text-text-secondary">
+                      Images, PDFs, docs & more
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-        <form
-          onSubmit={handleSubmit}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          className={cn(
-            'relative flex w-full flex-col gap-1',
-            'rounded-[28px] px-2.5 py-2 sm:px-3',
-            'bg-white/50 dark:bg-white/[0.05]',
-            'backdrop-blur-3xl backdrop-saturate-[1.8]',
-            'border border-black/[0.04] dark:border-white/[0.06]',
-            'shadow-[0_2px_4px_rgba(0,0,0,0.02),0_16px_44px_rgba(0,0,0,0.06),inset_0_0.5px_0_rgba(255,255,255,0.6)]',
-            'dark:shadow-[0_2px_4px_rgba(0,0,0,0.2),0_20px_56px_rgba(0,0,0,0.35),inset_0_0.5px_0_rgba(255,255,255,0.045)]',
-            'transition-[background-color,box-shadow,border-color] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
-            'focus-within:bg-white/60 dark:focus-within:bg-white/[0.08]',
-            'focus-within:border-black/[0.055] dark:focus-within:border-white/[0.09]',
-            'focus-within:shadow-[0_2px_6px_rgba(0,0,0,0.03),0_20px_52px_rgba(0,0,0,0.09),0_0_0_3px_rgba(0,113,227,0.07),inset_0_0.5px_0_rgba(255,255,255,0.7)]',
-            'dark:focus-within:shadow-[0_2px_6px_rgba(0,0,0,0.28),0_24px_64px_rgba(0,0,0,0.45),0_0_0_3px_rgba(10,132,255,0.12),inset_0_0.5px_0_rgba(255,255,255,0.08)]',
-            isDragging &&
-              'border-primary/40 bg-primary/[0.04] shadow-[0_0_0_3px_rgba(0,113,227,0.12)] dark:border-primary/50'
-          )}
-        >
-          {isDragging && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[28px] bg-primary/[0.06] backdrop-blur-[2px]">
-              <p className="text-[13.5px] font-medium tracking-[-0.015em] text-primary">
-                Drop images or files to attach
-              </p>
-            </div>
-          )}
-
-          <AttachmentPreview
-            attachments={attachments}
-            onRemove={removeAttachment}
-            onCancel={cancelAttachment}
-          />
-
-          <div className="flex w-full items-end gap-1.5">
             <input
               ref={fileInputRef}
               type="file"
               multiple
               accept={ACCEPT_ATTRIBUTE}
               className="hidden"
+              data-testid="chat-file-input"
               onChange={(e) => {
                 if (e.target.files?.length) void ingestFiles(e.target.files, 'upload');
                 e.target.value = '';
               }}
-            />
+ />
+            <input
+              ref={imageInputRef}
+              type="file"
+              multiple
+              accept={IMAGE_ACCEPT_ATTRIBUTE}
+              className="hidden"
+              data-testid="chat-image-input"
+              onChange={(e) => {
+                if (e.target.files?.length) void ingestFiles(e.target.files, 'upload');
+                e.target.value = '';
+              }}
+ />
             <input
               ref={cameraInputRef}
               type="file"
               accept={IMAGE_ACCEPT_ATTRIBUTE}
               capture="environment"
               className="hidden"
+              data-testid="chat-camera-input"
               onChange={(e) => {
                 if (e.target.files?.length) void ingestFiles(e.target.files, 'camera');
                 e.target.value = '';
               }}
-            />
+ />
 
-            {/* Attachment — left */}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading}
-              className={controlBtnClass}
-              aria-label="Attach file"
-            >
-              <Paperclip size={18} strokeWidth={1.75} />
-            </button>
-
-            {/* Camera — touch / mobile only */}
-            {showCamera && (
-              <button
-                type="button"
-                onClick={() => cameraInputRef.current?.click()}
-                disabled={isLoading}
-                className={controlBtnClass}
-                aria-label="Take photo"
-              >
-                <Camera size={18} strokeWidth={1.75} />
-              </button>
+            {attachments.length > 0 && (
+              <div className="px-3 pt-2.5">
+                <AttachmentPreview
+                  attachments={attachments}
+                  onRemove={removeAttachment}
+                  onCancel={cancelAttachment}
+                  onRetry={retryAttachment}
+                  onPreview={openPreview}
+                  onReorder={reorderAttachments}
+ />
+              </div>
             )}
 
-            {/* Auto-growing textarea */}
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder="Message VANI AI..."
-              disabled={isLoading}
-              rows={1}
-              className={cn(
-                'min-w-0 flex-1 resize-none bg-transparent',
-                'py-[9px] text-[15.5px] leading-6 tracking-[-0.016em]',
-                'text-foreground',
-                'placeholder:text-muted-foreground/40',
-                'outline-none border-none ring-0 focus:ring-0',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                'custom-scrollbar overflow-y-auto'
+            <AnimatePresence>
+              {(webSearchEnabled || deepResearchEnabled) && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="flex items-center gap-1.5 overflow-hidden px-3.5 pt-2"
+                >
+                  {deepResearchEnabled && (
+                    <ActiveModeChip
+                      label="Deep Research"
+                      onClear={() => enableDeepResearch(false)}
+ />
+                  )}
+                  {webSearchEnabled && (
+                    <ActiveModeChip
+                      label="Web Search"
+                      onClear={() => enableWebSearch(false)}
+ />
+                  )}
+                </motion.div>
               )}
-              style={{ height: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT }}
-            />
+            </AnimatePresence>
 
-            {/* Microphone */}
-            <button type="button" className={controlBtnClass} aria-label="Voice input">
-              <Mic size={18} strokeWidth={1.75} />
-            </button>
-
-            {/* Send — blue circular */}
-            <button
-              type="submit"
-              disabled={!canSend && !isLoading}
+            {/* Single lightweight row ≈ 54px */}
+            <div
               className={cn(
-                'hover-lift flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
-                'transition-[background-color,box-shadow,filter] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
-                canSend
-                  ? 'bg-[#0071e3] text-white shadow-[0_1px_2px_rgba(0,113,227,0.18),0_4px_14px_rgba(0,113,227,0.24)] hover:brightness-[1.05] dark:bg-[#0A84FF] dark:shadow-[0_1px_2px_rgba(10,132,255,0.22),0_4px_14px_rgba(10,132,255,0.26)]'
-                  : isLoading
-                    ? 'bg-[#0071e3]/85 text-white dark:bg-[#0A84FF]/85'
-                    : 'bg-black/[0.035] text-muted-foreground/30 cursor-not-allowed dark:bg-white/[0.05] dark:text-white/20'
+                'flex w-full items-center gap-0.5 px-1.5',
+                hasExtra ? 'min-h-[52px] py-1.5' : 'h-[54px]'
               )}
-              aria-label={isLoading ? 'Stop generating' : 'Send message'}
             >
-              {isLoading ? (
-                <Square size={11} strokeWidth={2.5} fill="currentColor" />
-              ) : (
-                <ArrowUp size={18} strokeWidth={2.5} />
-              )}
-            </button>
-          </div>
-        </form>
+              <ComposerPlusMenu
+                disabled={isLoading}
+                webSearchEnabled={webSearchEnabled}
+                deepResearchEnabled={deepResearchEnabled}
+                onUpload={() => fileInputRef.current?.click()}
+                onCamera={() => cameraInputRef.current?.click()}
+                onImage={() => imageInputRef.current?.click()}
+                onCanvas={onOpenCanvas}
+                onToggleWebSearch={onToggleWebSearch ? enableWebSearch : undefined}
+                onToggleDeepResearch={onToggleDeepResearch ? enableDeepResearch : undefined}
+ />
+
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                placeholder="Message VANI…"
+                disabled={isLoading}
+                rows={1}
+                aria-label="Message input"
+                className={cn(
+                  'min-w-0 flex-1 resize-none bg-transparent',
+                  'py-2 text-[15px] leading-[1.4] tracking-[-0.014em]',
+                  'text-foreground',
+                  'placeholder:text-muted-foreground/38',
+                  'outline-none border-none ring-0 focus:ring-0 focus-visible:shadow-none',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  'custom-scrollbar overflow-y-auto'
+                )}
+                style={{ height: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT }}
+ />
+
+              <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
+                {agents && onSelectAgent && (
+                  <AgentSelector
+                    agents={agents}
+                    selectedAgent={deepResearchEnabled ? null : selectedAgent}
+                    onSelect={(id) => {
+                      if (id) enableDeepResearch(false);
+                      onSelectAgent(id);
+                    }}
+                    disabled={isLoading || deepResearchEnabled}
+ />
+                )}
+                {onSelectModel && (
+                  <ModelSelector
+                    value={selectedModel}
+                    onChange={onSelectModel}
+                    disabled={isLoading}
+                    projectDefault={projectDefaultModel}
+ />
+                )}
+
+                <button
+                  type="button"
+                  onClick={onOpenVoiceMode}
+                  disabled={isLoading || !onOpenVoiceMode}
+                  className={cn(
+                    controlBtnClass,
+                    onOpenVoiceMode && !isLoading && 'hover:text-primary'
+                  )}
+                  aria-label="Start Live Mode"
+                  title="Live Mode"
+                >
+                  <Mic size={17} strokeWidth={1.75} />
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={!canSend && !isLoading}
+                  className={cn(
+                    'hover-lift flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+                    'transition-all duration-normal ease-apple',
+                    canSend
+                      ? 'bg-accent text-text-on-accent shadow-[0_1px_2px_rgba(107,92,255,0.2),0_4px_14px_rgba(107,92,255,0.32)] hover:bg-accent-hover'
+                      : isLoading
+                        ? 'bg-accent/85 text-text-on-accent'
+                        : 'bg-surface-hover text-text-tertiary/40 cursor-not-allowed'
+                  )}
+                  aria-label={isLoading ? 'Stop generating' : 'Send message'}
+                >
+                  {isLoading ? (
+                    <Square size={10} strokeWidth={2.5} fill="currentColor" />
+                  ) : (
+                    <ArrowUp size={16} strokeWidth={2.5} />
+                  )}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
+
+      <AttachmentLightbox attachment={previewAttachment} onClose={closePreview} />
+    </>
+  );
+});
+
+function ActiveModeChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClear}
+      className={cn(
+        'inline-flex h-6 items-center gap-1 rounded-full px-2.5',
+        'text-[12px] font-medium tracking-[-0.01em]',
+        'bg-primary/[0.1] text-primary',
+        'transition-colors duration-normal ease-out hover:bg-primary/[0.16]'
+      )}
+      aria-label={`Disable ${label}`}
+    >
+      <span>{label}</span>
+      <X size={11} strokeWidth={2} className="opacity-70" />
+    </button>
   );
 }
+
+export default memo(ChatInput);

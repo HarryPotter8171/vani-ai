@@ -3,7 +3,15 @@
  *
  * Every tool exposes: id, name, description, schema, execute()
  * The registry is the single source of truth for model-callable tools.
+ *
+ * Optional gating fields:
+ *   feature — FeatureKey checked via FeatureGate before execute
+ *   quotaMetric — UsageMetric reserved/checked before execute
  */
+
+import { featureGate } from "../billing/FeatureGate.ts";
+import { recordBillingUsage } from "../middleware/usageTracking.js";
+import { recordToolAnalytics } from "../middleware/analyticsLogging.js";
 
 const toolsByName = new Map();
 
@@ -27,6 +35,8 @@ const toolsByName = new Map();
  * @property {boolean} [enabled=true]
  * @property {boolean} [future=false]
  * @property {string} [displayName]
+ * @property {string} [feature]
+ * @property {string} [quotaMetric]
  */
 
 function assertTool(tool) {
@@ -92,14 +102,75 @@ export async function executeTool(name, args = {}, ctx = {}) {
     if (ctx.signal?.aborted) {
       return { ok: false, error: "Aborted" };
     }
+
+    const userId = ctx.userId || ctx.user?._id || ctx.user?.id || null;
+    if (tool.feature || tool.quotaMetric) {
+      if (tool.feature) {
+        const access = await featureGate.checkAccess(
+          userId ? String(userId) : null,
+          tool.feature,
+          1
+        );
+        if (!access.ok) {
+          return {
+            ok: false,
+            error: access.message,
+            code: access.code,
+            requiredPlan: access.requiredPlan || null,
+            upgradeHint: access.upgradeHint || null,
+          };
+        }
+      } else if (tool.quotaMetric) {
+        const quota = await featureGate.checkQuota(
+          userId ? String(userId) : null,
+          tool.quotaMetric,
+          1
+        );
+        if (!quota.ok) {
+          return {
+            ok: false,
+            error: quota.message,
+            code: quota.code,
+            requiredPlan: quota.requiredPlan || null,
+            upgradeHint: quota.upgradeHint || null,
+          };
+        }
+      }
+    }
+
     const result = await tool.execute(args || {}, ctx);
-    if (result && typeof result === "object" && "ok" in result) return result;
-    return { ok: true, data: result };
+    const normalized =
+      result && typeof result === "object" && "ok" in result
+        ? result
+        : { ok: true, data: result };
+
+    // Record image / metered tool usage after successful execution.
+    if (
+      normalized.ok &&
+      userId &&
+      tool.quotaMetric &&
+      (tool.quotaMetric === "image_generation" ||
+        tool.quotaMetric === "browser_sessions" ||
+        tool.quotaMetric === "code_executions")
+    ) {
+      void recordBillingUsage(String(userId), tool.quotaMetric, 1, {
+        tool: name,
+      }).catch(() => undefined);
+    }
+
+    void recordToolAnalytics({
+      userId: userId ? String(userId) : null,
+      tool: name,
+      category: tool.quotaMetric || "tool",
+    }).catch(() => undefined);
+
+    return normalized;
   } catch (err) {
     console.error(`[tool:${name}]`, err);
     return {
       ok: false,
       error: err?.message || "Tool execution failed",
+      code: err?.code || null,
     };
   }
 }

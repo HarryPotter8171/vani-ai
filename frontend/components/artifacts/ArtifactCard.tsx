@@ -1,6 +1,7 @@
 'use client';
 
-import { FileCode2, Loader2, ChevronRight } from 'lucide-react';
+import { FileCode2, ChevronRight } from 'lucide-react';
+import { Spinner } from '@/components/ui/Spinner';
 import { cn } from '@/lib/utils';
 import type { Artifact } from '@/lib/artifacts';
 import { LANGUAGE_INFO } from '@/lib/artifacts';
@@ -35,7 +36,7 @@ export default function ArtifactCard({ artifact, isActive, onOpen }: ArtifactCar
         )}
       >
         {artifact.isStreaming ? (
-          <Loader2 size={16} strokeWidth={2.25} className="animate-spin" />
+          <Spinner size={16} />
         ) : (
           <FileCode2 size={16} strokeWidth={2.25} />
         )}
@@ -53,7 +54,7 @@ export default function ArtifactCard({ artifact, isActive, onOpen }: ArtifactCar
         size={16}
         strokeWidth={2}
         className="shrink-0 text-muted-foreground/50 transition-transform duration-200 group-hover:translate-x-0.5"
-      />
+ />
     </button>
   );
 }
