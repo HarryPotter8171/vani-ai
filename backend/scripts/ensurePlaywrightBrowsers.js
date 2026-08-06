@@ -1,9 +1,10 @@
 /**
  * Ensure Playwright's Chromium binary is installed.
- * Used as the backend `postinstall` hook and via `npm run install:browsers`.
+ * Invoked by `npm run install:browsers` and by the package.json `postinstall`
+ * guard (only for full local/dev installs — not production / `npm ci --omit=dev`).
  *
- * Skips when PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 (e.g. Docker deps stage,
- * where browsers are installed later with OS deps via `playwright install --with-deps`).
+ * Skips when PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 (e.g. CI, Docker runtime stage
+ * where browsers are installed later via `playwright install --with-deps`).
  */
 
 import { spawnSync } from "node:child_process";

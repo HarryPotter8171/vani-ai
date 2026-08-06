@@ -7,7 +7,7 @@
     "start": "node server.js",
     "lint": "node scripts/checkSyntax.js",
     "build": "node scripts/checkSyntax.js",
-    "postinstall": "node scripts/ensurePlaywrightBrowsers.js",
+    "postinstall": "node -e \"const omit=String(process.env.npm_config_omit||'').split(',').map(s=>s.trim()).filter(Boolean);const skip=process.env.NODE_ENV==='production'||omit.includes('dev')||process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD==='1'||process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD==='true';const{existsSync}=require('fs');const{spawnSync}=require('child_process');const p='scripts/ensurePlaywrightBrowsers.js';if(skip||!existsSync(p)){console.log('[playwright] Skipping browser download (production / omit=dev / skip flag / script absent)');process.exit(0)}const r=spawnSync(process.execPath,[p],{stdio:'inherit'});process.exit(r.status??1)\"",
     "install:browsers": "node scripts/ensurePlaywrightBrowsers.js",
     "verify:agents": "node scripts/verifyAgents.js",
     "verify:mcp": "node scripts/verifyMcp.js",

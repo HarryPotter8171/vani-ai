@@ -20,9 +20,11 @@ ARG INSTALL_BROWSER_AUTOMATION=false
 # --- deps -------------------------------------------------------------------
 FROM node:${NODE_VERSION} AS deps
 WORKDIR /app
-# Skip Playwright browser download during npm ci — Chromium is installed in
-# the runtime stage with OS dependencies via `playwright install --with-deps`.
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+# Production deps only. postinstall skips Playwright browsers when omit=dev /
+# NODE_ENV=production / PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD (script is not copied
+# in this stage). Optional Chromium install is in the runtime stage below.
+ENV NODE_ENV=production \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
