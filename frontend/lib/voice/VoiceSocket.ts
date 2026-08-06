@@ -6,6 +6,7 @@
 
 import { getApiBaseUrl } from '@/lib/constants';
 import { getAccessToken } from '@/lib/apiClient';
+import { safeUrl } from '@/lib/safeUrl';
 import type { VoiceSessionInfo } from '@/lib/voice/types';
 
 export type VoiceSocketEvent =
@@ -43,14 +44,19 @@ const RECONNECT_BASE_MS = 400;
 const RECONNECT_MAX_MS = 10_000;
 const PING_INTERVAL_MS = 20_000;
 
-function voiceWsUrl(token: string, sessionId?: string | null): string {
-  const base = getApiBaseUrl().replace(/\/$/, '');
+function voiceWsUrl(token: string, sessionId?: string | null): string | null {
+  const httpBase = getApiBaseUrl().replace(/\/$/, '');
   // http(s)://host[:port]/api → ws(s)://host[:port]/api/voice/ws
-  const wsBase = base.replace(/^http/, 'ws');
-  const url = new URL(`${wsBase}/voice/ws`);
-  url.searchParams.set('token', token);
-  if (sessionId) url.searchParams.set('sessionId', sessionId);
-  return url.toString();
+  const wsBase = httpBase.replace(/^http/, 'ws');
+  const base = safeUrl(wsBase);
+  if (!base) return null;
+
+  // Keep the API path prefix (/api); absolute "/voice/ws" would drop it.
+  const path = `${base.pathname.replace(/\/$/, '')}/voice/ws`;
+  const wsUrl = new URL(path, base);
+  wsUrl.searchParams.set('token', token);
+  if (sessionId) wsUrl.searchParams.set('sessionId', sessionId);
+  return wsUrl.toString();
 }
 
 export class VoiceSocket {
@@ -108,7 +114,12 @@ export class VoiceSocket {
         this.ws = null;
       }
 
-      const ws = new WebSocket(voiceWsUrl(token, sessionId));
+      const wsHref = voiceWsUrl(token, sessionId);
+      if (!wsHref) {
+        reject(new Error('Voice WebSocket URL is not configured'));
+        return;
+      }
+      const ws = new WebSocket(wsHref);
       this.ws = ws;
 
       const onOpen = () => {

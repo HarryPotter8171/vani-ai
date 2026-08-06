@@ -10,6 +10,8 @@
  * NEXT_PUBLIC_API_BASE_URL — phones never hit the Mac when the URL says localhost.
  */
 
+import { safeUrl } from '@/lib/safeUrl';
+
 function resolveApiPort(): number {
   const raw = process.env.NEXT_PUBLIC_API_PORT?.trim();
   if (raw) {
@@ -38,9 +40,11 @@ function browserApiBaseUrl(hostname: string): string {
   if (isLocalOrLanHost(hostname)) {
     return `http://${hostname}:${API_PORT}/api`;
   }
-  // Production hostname: optional override, else same-origin /api
+  // Production hostname: optional absolute override, else same-origin /api
   const prod = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (prod) return prod.replace(/\/$/, '');
+  if (prod && safeUrl(prod)) {
+    return prod.replace(/\/$/, '');
+  }
   if (typeof window !== 'undefined') {
     return `${window.location.origin}/api`;
   }
@@ -59,13 +63,14 @@ export function getApiBaseUrl(): string {
   } else {
     // SSR / Node → Express on the same machine (not a browser URL).
     const internal = process.env.API_INTERNAL_BASE_URL?.trim();
-    if (internal) {
+    if (internal && safeUrl(internal)) {
       resolved = internal.replace(/\/$/, '');
     } else {
       const prod = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-      resolved = prod
-        ? prod.replace(/\/$/, '')
-        : `http://127.0.0.1:${API_PORT}/api`;
+      resolved =
+        prod && safeUrl(prod)
+          ? prod.replace(/\/$/, '')
+          : `http://127.0.0.1:${API_PORT}/api`;
     }
   }
 

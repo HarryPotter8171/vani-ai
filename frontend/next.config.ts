@@ -24,15 +24,15 @@ function lanDevOrigins(): string[] {
  * https/wss so staged API hosts and Sentry work without per-env rebuilds.
  */
 function contentSecurityPolicy(): string {
-  const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL
-    ? (() => {
-        try {
-          return new URL(process.env.NEXT_PUBLIC_API_BASE_URL).origin;
-        } catch {
-          return '';
-        }
-      })()
-    : '';
+  const apiOrigin = (() => {
+    try {
+      const v = process.env.NEXT_PUBLIC_API_BASE_URL;
+      if (!v) return '';
+      return new URL(v).origin;
+    } catch {
+      return '';
+    }
+  })();
   const connectExtra = apiOrigin ? ` ${apiOrigin}` : '';
   // Next.js / React Refresh need 'unsafe-eval' in development only.
   const scriptSrc =

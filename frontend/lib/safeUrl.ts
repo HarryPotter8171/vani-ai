@@ -6,6 +6,19 @@
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 
 /**
+ * Parse an absolute URL safely. Returns null for undefined, empty, relative,
+ * or otherwise invalid values — never throws (Vercel prerender / missing env).
+ */
+export function safeUrl(value?: string | null): URL | null {
+  if (!value?.trim()) return null;
+  try {
+    return new URL(value.trim());
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Return a safe href or `undefined` when the URL must not be rendered as a link.
  */
 export function safeHref(raw: string | null | undefined): string | undefined {
@@ -13,23 +26,19 @@ export function safeHref(raw: string | null | undefined): string | undefined {
   const trimmed = String(raw).trim();
   if (!trimmed) return undefined;
 
-  // Protocol-relative URLs are treated as https for scheme checks via URL parser.
-  let parsed: URL;
-  try {
-    // Relative paths (/, ./, #, ?) are safe same-origin navigations.
-    if (
-      trimmed.startsWith('/') ||
-      trimmed.startsWith('#') ||
-      trimmed.startsWith('?') ||
-      trimmed.startsWith('./') ||
-      trimmed.startsWith('../')
-    ) {
-      return trimmed;
-    }
-    parsed = new URL(trimmed);
-  } catch {
-    return undefined;
+  // Relative paths (/, ./, #, ?) are safe same-origin navigations.
+  if (
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('#') ||
+    trimmed.startsWith('?') ||
+    trimmed.startsWith('./') ||
+    trimmed.startsWith('../')
+  ) {
+    return trimmed;
   }
+
+  const parsed = safeUrl(trimmed);
+  if (!parsed) return undefined;
 
   if (!ALLOWED_PROTOCOLS.has(parsed.protocol.toLowerCase())) {
     return undefined;

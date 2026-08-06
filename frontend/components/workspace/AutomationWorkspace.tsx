@@ -17,6 +17,7 @@ import {
   type BrowserRun,
   type StartBrowserRunInput,
 } from '@/lib/browser';
+import { safeUrl } from '@/lib/safeUrl';
 
 export interface AutomationWorkspaceProps {
   run: BrowserRun | null;
@@ -28,12 +29,8 @@ export interface AutomationWorkspaceProps {
 }
 
 function looksLikeUrl(value: string): boolean {
-  try {
-    const u = new URL(value.trim());
-    return u.protocol === 'http:' || u.protocol === 'https:';
-  } catch {
-    return false;
-  }
+  const u = safeUrl(value.trim());
+  return !!u && (u.protocol === 'http:' || u.protocol === 'https:');
 }
 
 export default function AutomationWorkspace({

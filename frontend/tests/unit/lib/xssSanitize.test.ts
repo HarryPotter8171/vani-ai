@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { safeHref, markdownUrlTransform } from '@/lib/safeUrl';
+import { safeHref, safeUrl, markdownUrlTransform } from '@/lib/safeUrl';
 import { sanitizeRichtextHtmlSafe } from '@/lib/richtextSanitize';
+
+describe('safeUrl', () => {
+  it('returns null for empty / relative / invalid', () => {
+    expect(safeUrl(undefined)).toBeNull();
+    expect(safeUrl(null)).toBeNull();
+    expect(safeUrl('')).toBeNull();
+    expect(safeUrl('   ')).toBeNull();
+    expect(safeUrl('/api')).toBeNull();
+    expect(safeUrl('not a url')).toBeNull();
+  });
+
+  it('parses absolute http(s) URLs', () => {
+    expect(safeUrl('https://example.com/api')?.origin).toBe('https://example.com');
+    expect(safeUrl('ws://127.0.0.1:5001/api')?.protocol).toBe('ws:');
+  });
+});
 
 describe('safeHref / markdownUrlTransform', () => {
   it('allows http, https, mailto', () => {
