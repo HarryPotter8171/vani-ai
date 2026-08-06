@@ -18,17 +18,14 @@ import EmptyState from '@/components/chat/EmptyState';
 import TypingIndicator from '@/components/chat/TypingIndicator';
 import ConversationSkeleton from '@/components/chat/ConversationSkeleton';
 import VirtualizedMessageList from '@/components/chat/VirtualizedMessageList';
-import WorkspaceTabs from '@/components/workspace/WorkspaceTabs';
-import AiDock from '@/components/workspace/AiDock';
 import ContextPanel from '@/components/workspace/ContextPanel';
 import ProjectWorkspaceBar from '@/components/workspace/ProjectWorkspaceBar';
 import DropActionsOverlay from '@/components/workspace/DropActionsOverlay';
 import FilesWorkspace, { useProjectFiles } from '@/components/workspace/FilesWorkspace';
-import TasksWorkspace from '@/components/workspace/TasksWorkspace';
 import AutomationWorkspace from '@/components/workspace/AutomationWorkspace';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import { useMemory } from '@/hooks/useMemory';
-import type { DockAction, DropActionId, WorkspaceTab } from '@/lib/workspace/types';
+import type { DropActionId, WorkspaceTab } from '@/lib/workspace/types';
 import { browserExecutionPhaseFromRun } from '@/lib/browser';
 import {
   getAttachmentKind,
@@ -50,8 +47,13 @@ import {
   AiDashboard,
   ExecutionTimeline,
   AgentStatus,
+  DialogSkeleton,
+  InlinePanelSkeleton,
+  ModalPanelSkeleton,
+  SidePanelSkeleton,
 } from '@/components/lazy/FeaturePanels';
 import { useChat } from '@/hooks/useChat';
+import { useMessageTts } from '@/hooks/useMessageTts';
 import { useAgent } from '@/hooks/useAgent';
 import { useDeepResearch } from '@/hooks/useDeepResearch';
 import { useBrowser } from '@/hooks/useBrowser';
@@ -75,10 +77,20 @@ import type { Artifact } from '@/lib/artifacts';
 import type { ChatSummary, MessageAttachment } from '@/lib/types';
 import { isDevAuthClientEnabled } from '@/lib/auth/clientFlags';
 import { fetchAnalyticsIdentity } from '@/lib/analytics';
+import { useVisualViewport } from '@/hooks/useVisualViewport';
+import { useIsDesktop } from '@/hooks/useMediaQuery';
+import { CompactControlSkeleton } from '@/components/lazy/PanelSkeletons';
 
 const VoiceModeHost = dynamic(() => import('@/components/voice/VoiceModeHost'), {
   ssr: false,
-  loading: () => null,
+  loading: () => (
+    <div
+      className="pointer-events-none fixed z-[84] bottom-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] right-4 sm:bottom-8 sm:right-8"
+      aria-hidden
+    >
+      <CompactControlSkeleton className="h-14 w-14" />
+    </div>
+  ),
 });
 
 // Optimistic "New Chat" rows are keyed with this prefix until the server
@@ -89,19 +101,12 @@ const isTempChatId = (id: string | null): id is string =>
 
 export default function ChatPage() {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
   const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
   const [isMcpSettingsOpen, setIsMcpSettingsOpen] = React.useState(false);
   const [isBillingOpen, setIsBillingOpen] = React.useState(false);
   const [settingsSection, setSettingsSection] = React.useState<
-    | 'general'
-    | 'appearance'
-    | 'ai'
-    | 'agents'
-    | 'voice'
-    | 'memory'
-    | 'billing'
-    | 'usage'
-    | 'profile'
+    'general' | 'appearance' | 'ai' | 'memory' | 'profile' | 'billing' | 'about'
   >('general');
   const [isAnalyticsOpen, setIsAnalyticsOpen] = React.useState(false);
   const [isAdminDashboardOpen, setIsAdminDashboardOpen] = React.useState(false);
@@ -204,11 +209,27 @@ export default function ChatPage() {
   // Model selection: project default, with optional per-session user override.
   // Reset override when the active project changes (same render-time pattern as
   // useChat's scopedProjectId — avoids a cascading useEffect).
-  const [userModel, setUserModel] = useState<string | null>(null);
+  const DEFAULT_MODEL_STORAGE_KEY = 'vani-default-model';
+  const [userModel, setUserModel] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      return localStorage.getItem(DEFAULT_MODEL_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [modelScopeProjectId, setModelScopeProjectId] = useState(activeProjectId);
   if (modelScopeProjectId !== activeProjectId) {
     setModelScopeProjectId(activeProjectId);
-    setUserModel(null);
+    try {
+      setUserModel(
+        typeof window !== 'undefined'
+          ? localStorage.getItem(DEFAULT_MODEL_STORAGE_KEY)
+          : null
+      );
+    } catch {
+      setUserModel(null);
+    }
   }
   const projectDefaultModel =
     activeProject?.settings?.model &&
@@ -222,18 +243,30 @@ export default function ChatPage() {
     selectedModelRef.current = selectedModel;
   }, [selectedModel]);
 
+  const handleSelectModel = useCallback((modelKey: string) => {
+    setUserModel(modelKey);
+    try {
+      localStorage.setItem(DEFAULT_MODEL_STORAGE_KEY, modelKey);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const {
     messages,
     chatId,
     isLoading,
     isChatLoading,
     handleSendMessage,
+    regenerateMessage,
+    continueGenerating,
     stopGenerating,
     clearMessages,
     setChatId,
     loadChat,
     setMessages,
     appendToLastMessage,
+    replaceLastMessageContent,
     finalizeLastMessage,
   } = useChat({
     projectId: activeProjectId,
@@ -265,17 +298,21 @@ export default function ChatPage() {
       void refreshChatHistory();
     },
     onDelta: (text) => appendToLastMessage(text),
-    onComplete: (report) => {
+    onComplete: (report, _chatId, meta) => {
       if (!report) return;
       setMessages((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
         if (last?.role === 'assistant') {
+          const confidencePct =
+            typeof meta?.confidence === 'number'
+              ? ` · Confidence ${Math.round(meta.confidence * 100)}%`
+              : '';
           next[next.length - 1] = {
             ...last,
             content: report.startsWith('*Deep Research')
               ? report
-              : `*Deep Research report*\n\n${report}`,
+              : `*Deep Research report${confidencePct}*\n\n${report}`,
             isStreaming: false,
           };
         }
@@ -358,7 +395,10 @@ export default function ChatPage() {
       setChatId(id);
       void refreshChatHistory();
     },
-    onDelta: (text) => appendToLastMessage(text),
+    onDelta: (text, meta) => {
+      if (meta?.replace) replaceLastMessageContent(text);
+      else appendToLastMessage(text);
+    },
     onError: notifyError,
     onGateDenial: handleGateDenial,
   });
@@ -375,6 +415,8 @@ export default function ChatPage() {
 
   const handleSendWithOptionalAgent = useCallback(
     async (content: string, attachments?: MessageAttachment[]) => {
+      stickToBottomRef.current = true;
+
       // Deep Research — multi-phase investigation pipeline.
       if (deepResearchEnabled) {
         if (!content.trim()) return;
@@ -539,8 +581,6 @@ export default function ChatPage() {
     openContext,
     closeContext,
     toggleContext,
-    dockExpanded,
-    setDockExpanded,
   } = useWorkspace({
     isCanvasOpen,
     deepResearchEnabled,
@@ -595,17 +635,60 @@ export default function ChatPage() {
   const messagesContainerRef = useRef<HTMLElement>(null);
   // Floating composer overlays the scroll pane — keep dynamic clearance so the
   // last message never renders underneath the input (incl. multiline growth).
+  // Always leave ≥120px breathing room above the composer.
   const [composerHeight, setComposerHeight] = useState(0);
   const handleComposerHeightChange = useCallback((height: number) => {
     setComposerHeight((prev) => (Math.abs(prev - height) < 0.5 ? prev : height));
   }, []);
-  // Fallback matches the previous fixed pb-48 until the first ResizeObserver tick.
+  const isDesktop = useIsDesktop();
+  const { keyboardInset } = useVisualViewport();
+  const mobileKeyboardInset = !isDesktop ? keyboardInset : 0;
   const messagesBottomInset =
     workspaceTab === 'automation'
       ? 32
-      : composerHeight > 0
-        ? composerHeight
-        : 140;
+      : Math.max(composerHeight > 0 ? composerHeight : 58, 58) +
+        160 +
+        mobileKeyboardInset;
+
+  const stickToBottomRef = useRef(true);
+  const {
+    activeMessageId: ttsMessageId,
+    ttsState,
+    paragraphIndex: ttsParagraphIndex,
+    play: playTts,
+    pause: pauseTts,
+    resume: resumeTts,
+    stop: stopTts,
+  } = useMessageTts({
+    onError: notifyError,
+  });
+
+  const handleRegenerate = useCallback(
+    (messageId: string) => {
+      stopTts();
+      void regenerateMessage(messageId);
+    },
+    [regenerateMessage, stopTts]
+  );
+
+  const handleContinue = useCallback(
+    (messageId: string) => {
+      stopTts();
+      void continueGenerating(messageId);
+    },
+    [continueGenerating, stopTts]
+  );
+
+  const handleReadAloud = useCallback(
+    (messageId: string, content: string) => {
+      if (ttsMessageId === messageId && ttsState === 'paused') {
+        void resumeTts();
+        return;
+      }
+      void playTts(messageId, content);
+    },
+    [ttsMessageId, ttsState, playTts, resumeTts]
+  );
 
   // Sidebar list stays in sync the moment a brand-new chat is persisted
   // server-side (chatId flips from null -> an id on the first message of a
@@ -643,10 +726,24 @@ export default function ChatPage() {
     resetCanvasState();
   }, [resetCanvasState]);
 
-  // New Chat: optimistic end-to-end — clears the thread and navigates to a
-  // placeholder row instantly, then reconciles with the server response
-  // (or rolls back + toasts on failure). Does not touch handleSendMessage.
-  const handleNewChat = useCallback(async () => {
+  const focusComposer = useCallback(() => {
+    // Composer may remount when empty-home layout flips — focus after paint.
+    requestAnimationFrame(() => {
+      chatInputRef.current?.focus();
+      window.setTimeout(() => chatInputRef.current?.focus(), 40);
+    });
+  }, []);
+
+  // New Chat: only create when the current thread already has a user message.
+  // Empty / brand-new chats stay selected — no duplicate empty conversations.
+  // `force` is used after deleting the active chat so a fresh thread still opens.
+  const handleNewChat = useCallback(async (opts?: { force?: boolean }) => {
+    const hasUserMessage = messages.some((m) => m.role === 'user');
+    if (!opts?.force && !hasUserMessage) {
+      focusComposer();
+      return;
+    }
+
     clearMessagesAndAgent();
     resetArtifactState();
 
@@ -664,12 +761,13 @@ export default function ChatPage() {
       const created = await createChatOnServer({ projectId: activeProjectId });
       replaceChat(tempId, created);
       setChatId((current) => (current === tempId ? created.id : current));
+      focusComposer();
     } catch (err) {
       removeChat(tempId);
       setChatId((current) => (current === tempId ? null : current));
       showToast((err as Error).message || 'Failed to create new chat. Please try again.', 'error');
     }
-  }, [clearMessagesAndAgent, resetArtifactState, addOptimisticChat, activeProjectId, setChatId, createChatOnServer, replaceChat, removeChat, showToast]);
+  }, [messages, focusComposer, clearMessagesAndAgent, resetArtifactState, addOptimisticChat, activeProjectId, setChatId, createChatOnServer, replaceChat, removeChat, showToast]);
 
   // Rename: applied to the sidebar immediately (optimistic), persisted via
   // PATCH /api/chat/:id/title, and rolled back to the exact previous title
@@ -711,9 +809,8 @@ export default function ChatPage() {
 
       const confirmed = await confirm({
         title: 'Delete conversation?',
-        description: chatToDelete
-          ? `"${chatToDelete.title}" will be permanently deleted. This can't be undone.`
-          : "This can't be undone.",
+        description:
+          'This conversation will be permanently deleted.\nThis action cannot be undone.',
         confirmLabel: 'Delete',
         cancelLabel: 'Cancel',
         variant: 'danger',
@@ -724,7 +821,7 @@ export default function ChatPage() {
       if (activeProjectId) {
         void refreshProjectChats(activeProjectId);
       }
-      if (chatId === id) void handleNewChat();
+      if (chatId === id) void handleNewChat({ force: true });
 
       try {
         await deleteChatOnServer(id);
@@ -915,9 +1012,12 @@ export default function ChatPage() {
   }, [chatId]);
 
   const handleMessagesScroll = useCallback((event: React.UIEvent<HTMLElement>) => {
+    const el = event.currentTarget;
     const id = activeChatIdRef.current;
-    if (id) scrollPositionsRef.current.set(id, event.currentTarget.scrollTop);
-  }, []);
+    if (id) scrollPositionsRef.current.set(id, el.scrollTop);
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distanceFromBottom < Math.max(140, messagesBottomInset * 0.35);
+  }, [messagesBottomInset]);
 
   // Loading a conversation: fetches full history, restores its remembered
   // scroll position (or jumps to the latest message the first time it's
@@ -930,6 +1030,7 @@ export default function ChatPage() {
 
       clearAgentExecution();
       clearResearch();
+      stopTts();
 
       const container = messagesContainerRef.current;
       if (chatId && container) {
@@ -939,6 +1040,7 @@ export default function ChatPage() {
       setPendingChatId(id);
       resetArtifactState();
       pendingScrollRestoreRef.current = id;
+      stickToBottomRef.current = true;
 
       try {
         await loadChat(id);
@@ -949,14 +1051,13 @@ export default function ChatPage() {
         setPendingChatId(null);
       }
     },
-    [chatId, pendingChatId, loadChat, resetArtifactState, showToast, clearAgentExecution, clearResearch]
+    [chatId, pendingChatId, loadChat, resetArtifactState, showToast, clearAgentExecution, clearResearch, stopTts]
   );
 
   // Single scroll owner for the message pane:
   //  - a pending chat-history load restores instantly (no CSS smooth-scroll
   //    animation sliding through the whole thread);
-  //  - everything else (new/streaming messages) pins to the true content bottom,
-  //    which sits above the composer thanks to dynamic bottom inset.
+  //  - streaming / new messages only follow when the user is near the bottom.
   useLayoutEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
@@ -968,10 +1069,15 @@ export default function ChatPage() {
       container.style.scrollBehavior = 'auto';
       container.scrollTop = scrollPositionsRef.current.get(restoreTargetId) ?? container.scrollHeight;
       container.style.scrollBehavior = previousBehavior;
+      stickToBottomRef.current = true;
       return;
     }
 
-    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    if (!stickToBottomRef.current) return;
+
+    // Instant while streaming (avoids janky smooth-scroll fights); smooth for settled turns.
+    const behavior: ScrollBehavior = isLoading || isAgentRunning || isResearchRunning ? 'auto' : 'smooth';
+    container.scrollTo({ top: container.scrollHeight, behavior });
   }, [messages, isLoading, isAgentRunning, isResearchRunning, agentExecutor.progress, researchState.progress]);
 
   // When the composer grows/shrinks (multiline, attachments), keep a bottom-pinned
@@ -980,13 +1086,24 @@ export default function ChatPage() {
     const container = messagesContainerRef.current;
     if (!container || composerHeight <= 0) return;
     if (pendingScrollRestoreRef.current) return;
+    if (!stickToBottomRef.current) return;
 
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromBottom <= messagesBottomInset + 48) {
-      container.scrollTop = container.scrollHeight;
-    }
+    container.scrollTop = container.scrollHeight;
   }, [composerHeight, messagesBottomInset]);
+
+  // Soft-keyboard open/close — re-pin to bottom so the latest turn stays visible.
+  const prevKeyboardInsetRef = useRef(0);
+  useLayoutEffect(() => {
+    if (isDesktop) return;
+    const prev = prevKeyboardInsetRef.current;
+    prevKeyboardInsetRef.current = mobileKeyboardInset;
+    if (mobileKeyboardInset === prev) return;
+    if (!stickToBottomRef.current) return;
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    // Instant jump avoids fighting iOS visualViewport animation.
+    container.scrollTop = container.scrollHeight;
+  }, [mobileKeyboardInset, isDesktop]);
 
   const onSuggestionClick = useCallback(
     (text: string) => {
@@ -997,6 +1114,53 @@ export default function ChatPage() {
 
   const closeSidebar = useCallback(() => setIsSidebarOpen(false), []);
   const openSidebar = useCallback(() => setIsSidebarOpen(true), []);
+  const toggleSidebarCollapsed = useCallback(
+    () => setIsSidebarCollapsed((v) => !v),
+    []
+  );
+  const handleToggleSidebar = useCallback(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setIsSidebarOpen((v) => !v);
+      return;
+    }
+    setIsSidebarCollapsed((v) => !v);
+  }, []);
+
+  /** Left-edge swipe → open mobile drawer (ChatGPT/Gemini pattern). */
+  const edgeSwipeRef = useRef<{
+    startX: number;
+    startY: number;
+    tracking: boolean;
+  } | null>(null);
+  const onEdgePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse') return;
+    edgeSwipeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      tracking: true,
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }, []);
+  const onEdgePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const s = edgeSwipeRef.current;
+      if (!s?.tracking) return;
+      const dx = e.clientX - s.startX;
+      const dy = e.clientY - s.startY;
+      if (Math.abs(dy) > 24 && Math.abs(dy) > Math.abs(dx)) {
+        s.tracking = false;
+        return;
+      }
+      if (dx > 48) {
+        s.tracking = false;
+        openSidebar();
+      }
+    },
+    [openSidebar]
+  );
+  const onEdgePointerUp = useCallback(() => {
+    edgeSwipeRef.current = null;
+  }, []);
   const openMemory = useCallback(() => setIsMemoryOpen(true), []);
   const closeMemory = useCallback(() => setIsMemoryOpen(false), []);
   const closeMcpSettings = useCallback(() => setIsMcpSettingsOpen(false), []);
@@ -1008,7 +1172,7 @@ export default function ChatPage() {
     []
   );
   const closeBillingSettings = useCallback(() => setIsBillingOpen(false), []);
-  const openAgentsSettings = useCallback(() => openBillingSettings('agents'), [openBillingSettings]);
+  const openAgentsSettings = useCallback(() => openBillingSettings('general'), [openBillingSettings]);
   const openBillingTab = useCallback(() => openBillingSettings('billing'), [openBillingSettings]);
   const openAnalytics = useCallback(() => setIsAnalyticsOpen(true), []);
   const closeAnalytics = useCallback(() => setIsAnalyticsOpen(false), []);
@@ -1070,7 +1234,8 @@ export default function ChatPage() {
         return;
       }
       if (tab === 'memory') {
-        openContext('memory');
+        openMemory();
+        selectWorkspaceTab('chat');
         return;
       }
       if (tab === 'files') {
@@ -1078,7 +1243,7 @@ export default function ChatPage() {
         return;
       }
       if (tab === 'tasks') {
-        openContext('tasks');
+        selectWorkspaceTab('chat');
         return;
       }
       if (tab === 'automation') {
@@ -1100,47 +1265,7 @@ export default function ChatPage() {
       selectAgent,
       browserRun,
       setBrowserPanelOpen,
-    ]
-  );
-
-  const handleDockAction = useCallback(
-    (action: DockAction) => {
-      switch (action) {
-        case 'files':
-          handleWorkspaceTabChange('files');
-          break;
-        case 'research':
-          handleOpenResearchWorkspace();
-          break;
-        case 'canvas':
-          handleWorkspaceTabChange('canvas');
-          break;
-        case 'memory':
-          handleWorkspaceTabChange('memory');
-          openMemory();
-          break;
-        case 'agents':
-          openContext('agents');
-          openAgentsSettings();
-          break;
-        case 'images':
-          handleOpenImages();
-          break;
-        case 'voice':
-          openVoiceMode();
-          break;
-        default:
-          break;
-      }
-    },
-    [
-      handleWorkspaceTabChange,
-      handleOpenResearchWorkspace,
       openMemory,
-      openContext,
-      openAgentsSettings,
-      handleOpenImages,
-      openVoiceMode,
     ]
   );
 
@@ -1150,22 +1275,11 @@ export default function ChatPage() {
         handleWorkspaceTabChange('files');
         return;
       }
-      if (dest === 'agents') {
-        openContext('agents');
-        openAgentsSettings();
-        return;
-      }
-      if (
-        dest === 'chat' ||
-        dest === 'canvas' ||
-        dest === 'research' ||
-        dest === 'memory' ||
-        dest === 'tasks'
-      ) {
-        handleWorkspaceTabChange(dest);
+      if (dest === 'chat') {
+        handleWorkspaceTabChange('chat');
       }
     },
-    [handleWorkspaceTabChange, openContext, openAgentsSettings]
+    [handleWorkspaceTabChange]
   );
 
   const handleFilesDropped = useCallback((files: FileList) => {
@@ -1460,6 +1574,9 @@ export default function ChatPage() {
     !isResearchRunning &&
     !voiceLive;
 
+  // Empty home centers hero + inline composer; threads need floating clearance.
+  const scrollBottomInset = isEmptyHome ? 32 : messagesBottomInset;
+
   const needsContextChrome =
     messages.length > 0 ||
     !!activeProject ||
@@ -1572,7 +1689,7 @@ export default function ChatPage() {
       onNewChat={handleNewChat}
     >
       <KeyboardShortcutsProvider onVoice={openVoiceMode} onNewChat={handleNewChat}>
-    <div className="relative flex h-screen w-full overflow-hidden">
+    <div className="relative flex h-dvh max-h-dvh w-full overflow-hidden">
       {/* Ambient background — breathing mesh + floating light blobs */}
       <div className="app-background" aria-hidden="true">
         <div className="app-background-blobs">
@@ -1607,11 +1724,25 @@ export default function ChatPage() {
         handleFilesDropped(e.dataTransfer.files);
       }}
     >
+        {/* Left-edge swipe zone — open drawer on mobile */}
+        {!isDesktop && !isSidebarOpen ? (
+          <div
+            className="fixed inset-y-0 left-0 z-[35] w-5 touch-none md:hidden"
+            aria-hidden
+            onPointerDown={onEdgePointerDown}
+            onPointerMove={onEdgePointerMove}
+            onPointerUp={onEdgePointerUp}
+            onPointerCancel={onEdgePointerUp}
+          />
+        ) : null}
+
         {/* Floating sidebar */}
         <Sidebar
           isOpen={isSidebarOpen}
           onClose={closeSidebar}
           onOpen={openSidebar}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapsed={toggleSidebarCollapsed}
           onNewChat={handleNewChat}
           onRenameChat={handleRenameChat}
           onDeleteChat={handleDeleteChat}
@@ -1680,38 +1811,12 @@ export default function ChatPage() {
               : 'relative flex min-h-0 min-w-0 flex-1 flex-col'
           }
         >
-          <Header
-            onToggleSidebar={() => setIsSidebarOpen(true)}
-          />
+          <Header onToggleSidebar={handleToggleSidebar} />
 
-          {!isEmptyHome ? (
-            <WorkspaceTabs
-              active={workspaceTab}
-              onChange={handleWorkspaceTabChange}
-              badges={{
-                files: activeProject?.stats?.fileCount || undefined,
-                memory: memoryPreview.total || undefined,
-              }}
-              className="border-b border-border/60"
-            />
-          ) : null}
-
-          {activeProject ? (
+          {activeProject && !isEmptyHome ? (
             <ProjectWorkspaceBar
               project={activeProject}
-              active={
-                workspaceTab === 'files'
-                  ? 'files'
-                  : workspaceTab === 'tasks'
-                    ? 'tasks'
-                    : workspaceTab === 'memory'
-                      ? 'memory'
-                      : workspaceTab === 'research'
-                        ? 'research'
-                        : workspaceTab === 'canvas'
-                          ? 'canvas'
-                          : 'chat'
-              }
+              active={workspaceTab === 'files' ? 'files' : 'chat'}
               onNavigate={handleProjectWorkspaceNav}
             />
           ) : null}
@@ -1720,15 +1825,19 @@ export default function ChatPage() {
           <main
             ref={messagesContainerRef}
             onScroll={handleMessagesScroll}
-            className="custom-scrollbar relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden scroll-smooth"
+            className={
+              isEmptyHome
+                ? 'custom-scrollbar relative flex min-h-0 flex-1 items-center justify-center overflow-y-auto overflow-x-hidden scroll-smooth max-md:items-start max-md:justify-start max-md:overscroll-y-contain max-md:[-webkit-overflow-scrolling:touch]'
+                : 'custom-scrollbar relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden scroll-smooth max-md:overscroll-y-contain max-md:[-webkit-overflow-scrolling:touch]'
+            }
           >
             <div
               className={
-                !isChatLoading && messages.length === 0 && workspaceTab === 'chat'
-                  ? 'mx-auto flex w-full max-w-[720px] flex-col px-4 pt-6 sm:px-5 md:px-6 md:pt-10 scroll-mt-0'
-                  : 'mx-auto flex w-full max-w-[760px] flex-col px-4 pt-6 sm:px-5 md:px-6 md:pt-8 scroll-mt-0'
+                isEmptyHome
+                  ? 'vani-chat-column flex w-full flex-col py-10 scroll-mt-0 max-md:pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] max-md:pt-[max(4rem,calc(env(safe-area-inset-top)+3rem))]'
+                  : 'vani-chat-column flex flex-col pt-6 md:pt-8 scroll-mt-0 max-md:pt-[max(3.5rem,calc(env(safe-area-inset-top)+2.75rem))]'
               }
-              style={{ paddingBottom: messagesBottomInset }}
+              style={{ paddingBottom: scrollBottomInset }}
             >
               {workspaceTab === 'files' ? (
                 <PageTransition viewKey="files">
@@ -1764,36 +1873,6 @@ export default function ChatPage() {
                 </PageTransition>
               ) : null}
 
-              {workspaceTab === 'tasks' ? (
-                <PageTransition viewKey="tasks">
-                  <TasksWorkspace
-                    projectId={activeProjectId}
-                    onAskAi={(prompt) => {
-                      void handleSendWithOptionalAgent(prompt);
-                      selectWorkspaceTab('chat');
-                    }}
-                  />
-                </PageTransition>
-              ) : null}
-
-              {workspaceTab === 'memory' ? (
-                <PageTransition viewKey="memory-inline">
-                  <div className="mx-auto max-w-[520px] py-6 text-center">
-                    <p className="type-title text-foreground">Memory</p>
-                    <p className="mt-2 text-[14px] text-text-secondary">
-                      Long-term memory is managed in the full Memory workspace.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={openMemory}
-                      className="btn-ripple mt-4 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-text-on-accent"
-                    >
-                      Open Memory Manager
-                    </button>
-                  </div>
-                </PageTransition>
-              ) : null}
-
               {workspaceTab === 'automation' ? (
                 <PageTransition viewKey="automation">
                   <AutomationWorkspace
@@ -1816,10 +1895,10 @@ export default function ChatPage() {
                       className="flex min-h-[40vh] flex-col items-center justify-center px-6 py-16 text-center"
                       aria-hidden
                     >
-                      <p className="text-[15px] font-medium tracking-[-0.02em] text-muted-foreground/70">
+                      <p className="text-body font-medium tracking-[-0.02em] text-muted-foreground/70">
                         Live Mode is active
                       </p>
-                      <p className="mt-1.5 max-w-sm text-[13px] text-muted-foreground/50">
+                      <p className="mt-1.5 max-w-sm text-sm text-muted-foreground/50">
                         Conversation continues in Live Mode — chat messages stay
                         hidden until you end the session.
                       </p>
@@ -1831,31 +1910,37 @@ export default function ChatPage() {
                   </PageTransition>
                 ) : messages.length === 0 ? (
                   <PageTransition viewKey="empty">
-                    <EmptyState
-                      recentChats={recentChats}
-                      recentProjects={projects}
-                      activeProject={activeProject}
-                      onSelectChat={handleSidebarSelectChat}
-                      onSelectProject={handleSidebarSelectProject}
-                    />
+                    <EmptyState />
                   </PageTransition>
                 ) : (
                   <PageTransition viewKey={viewKey}>
                   <div className="flex flex-col">
                     <VirtualizedMessageList
                       messages={messages}
+                      threadKey={String(highlightedChatId || chatId || 'new')}
                       scrollParentRef={messagesContainerRef}
                       activeArtifactId={activeArtifactId}
                       onOpenArtifact={handleOpenArtifact}
                       onArtifactsDetected={handleArtifactsDetected}
                       onForgetMemory={handleForgetMemory}
+                      onRegenerate={handleRegenerate}
+                      onContinue={handleContinue}
+                      regenerateDisabled={isLoading}
+                      ttsMessageId={ttsMessageId}
+                      ttsState={ttsState}
+                      ttsParagraphIndex={ttsParagraphIndex}
+                      onReadAloud={handleReadAloud}
+                      onPauseAloud={pauseTts}
+                      onStopAloud={stopTts}
                     />
 
-                    {showTypingIndicator && <TypingIndicator />}
+                    <AnimatePresence>
+                      {showTypingIndicator ? <TypingIndicator key="typing" /> : null}
+                    </AnimatePresence>
 
                     {showAgentChrome && (
                       <div className="mt-3 mb-1 space-y-2">
-                        <Suspense fallback={null}>
+                        <Suspense fallback={<InlinePanelSkeleton />}>
                           <AgentStatus
                             agent={selectedAgentInfo}
                             executor={agentExecutor}
@@ -1875,7 +1960,7 @@ export default function ChatPage() {
 
                     {showResearchChrome && (
                       <div className="mt-3 mb-1">
-                        <Suspense fallback={null}>
+                        <Suspense fallback={<InlinePanelSkeleton />}>
                           <ResearchPanel
                             state={researchState}
                             isRunning={isResearchRunning}
@@ -1897,7 +1982,7 @@ export default function ChatPage() {
                     <div
                       ref={messagesEndRef}
                       className="h-4 w-full"
-                      style={{ scrollMarginBottom: messagesBottomInset }}
+                      style={{ scrollMarginBottom: scrollBottomInset }}
                       aria-hidden
                     />
                   </div>
@@ -1905,10 +1990,37 @@ export default function ChatPage() {
                 )}
               </AnimatePresence>
               )}
+
+              {/* isEmptyHome already implies workspaceTab === 'chat' and !activeProject */}
+              {isEmptyHome && !voiceLive ? (
+                <ChatInput
+                  ref={chatInputRef}
+                  placement="inline"
+                  onSendMessage={handleSendWithOptionalAgent}
+                  isLoading={busy || isChatLoading}
+                  onStopGenerating={handleStopOrCancel}
+                  onOpenVoiceMode={openVoiceMode}
+                  onOpenCanvas={() => {
+                    void createCanvasAndOpen({ type: 'markdown', title: 'Untitled' });
+                  }}
+                  onHeightChange={handleComposerHeightChange}
+                  agents={agentTypes}
+                  selectedAgent={selectedAgent}
+                  onSelectAgent={selectAgent}
+                  webSearchEnabled={webSearchEnabled}
+                  deepResearchEnabled={deepResearchEnabled}
+                  onToggleWebSearch={setWebSearchEnabled}
+                  onToggleDeepResearch={setDeepResearchEnabled}
+                  selectedModel={selectedModel}
+                  onSelectModel={handleSelectModel}
+                  projectDefaultModel={null}
+                  onFilesDropped={handleFilesDropped}
+                />
+              ) : null}
             </div>
           </main>
 
-          {/* Floating transparent input */}
+          {/* Floating composer — conversation mode only (home uses inline input) */}
           {quotaDenial ? (
             <QuotaExceededBanner
               denial={quotaDenial}
@@ -1919,7 +2031,7 @@ export default function ChatPage() {
               onDismiss={() => setQuotaDenial(null)}
             />
           ) : null}
-          {workspaceTab !== 'automation' && !voiceLive ? (
+          {!isEmptyHome && workspaceTab !== 'automation' && !voiceLive ? (
           <ChatInput
             ref={chatInputRef}
             onSendMessage={handleSendWithOptionalAgent}
@@ -1941,43 +2053,10 @@ export default function ChatPage() {
             onToggleWebSearch={setWebSearchEnabled}
             onToggleDeepResearch={setDeepResearchEnabled}
             selectedModel={selectedModel}
-            onSelectModel={setUserModel}
+            onSelectModel={handleSelectModel}
             projectDefaultModel={activeProject?.settings?.model || null}
             onFilesDropped={handleFilesDropped}
-            dock={
-              isEmptyHome ? null : (
-                <AiDock
-                  onAction={handleDockAction}
-                  expanded={dockExpanded}
-                  onExpandedChange={setDockExpanded}
-                  active={{
-                    files: workspaceTab === 'files',
-                    research: deepResearchEnabled || workspaceTab === 'research',
-                    canvas: isCanvasOpen,
-                    memory: workspaceTab === 'memory' || isMemoryOpen,
-                    agents: !!selectedAgent,
-                  }}
-                />
-              )
-            }
           />
-          ) : voiceLive && workspaceTab !== 'automation' ? (
-            <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
-              <div className="pointer-events-auto">
-                <AiDock
-                  onAction={handleDockAction}
-                  expanded={dockExpanded}
-                  onExpandedChange={setDockExpanded}
-                  active={{
-                    files: workspaceTab === 'files',
-                    research: deepResearchEnabled || workspaceTab === 'research',
-                    canvas: isCanvasOpen,
-                    memory: workspaceTab === 'memory' || isMemoryOpen,
-                    agents: !!selectedAgent,
-                  }}
-                />
-              </div>
-            </div>
           ) : null}
         </div>
 
@@ -2042,7 +2121,16 @@ export default function ChatPage() {
           }}
         />
 
-        <Suspense fallback={null}>
+        <Suspense
+          fallback={
+            <div
+              className="pointer-events-none fixed z-[84] bottom-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] right-4 sm:bottom-8 sm:right-8"
+              aria-hidden
+            >
+              <CompactControlSkeleton className="h-14 w-14" />
+            </div>
+          }
+        >
           <VoiceModeHost
             chatId={chatId}
             projectId={activeProjectId}
@@ -2056,58 +2144,84 @@ export default function ChatPage() {
           />
         </Suspense>
 
-        <Suspense fallback={null}>
-          <MemoryManager open={isMemoryOpen} onClose={closeMemory} />
-        </Suspense>
-        <Suspense fallback={null}>
-          <BillingSettings
-            open={isBillingOpen}
-            onClose={closeBillingSettings}
-            onOpenMcp={openMcpFromBilling}
-            onOpenMemory={openMemory}
-            initialSection={settingsSection}
-          />
-        </Suspense>
-        <Suspense fallback={null}>
-          <McpSettings open={isMcpSettingsOpen} onClose={closeMcpSettings} />
-        </Suspense>
-        <Suspense fallback={null}>
-          <AnalyticsPanel
-            open={isAnalyticsOpen}
-            onClose={closeAnalytics}
-            onOpenAdmin={openAdminDashboard}
-          />
-        </Suspense>
-        <Suspense fallback={null}>
-          <AiDashboard
-            open={isAiDashboardOpen}
-            onClose={closeAiDashboard}
-            projects={projects}
-            recentChats={recentChats}
-            onOpenAnalytics={openAnalytics}
-            onOpenMemory={openMemory}
-            onOpenAgents={openAgentsSettings}
-            onOpenVoice={openVoiceMode}
-            onSelectProject={handleSidebarSelectProject}
-            onSelectChat={handleSidebarSelectChat}
-            onStartResearch={handleOpenResearchWorkspace}
-          />
-        </Suspense>
-        <Suspense fallback={null}>
-          <AdminDashboard open={isAdminDashboardOpen} onClose={closeAdminDashboard} />
-        </Suspense>
+        {isMemoryOpen ? (
+          <Suspense fallback={<ModalPanelSkeleton />}>
+            <MemoryManager open onClose={closeMemory} chatId={chatId} />
+          </Suspense>
+        ) : null}
+        {isBillingOpen ? (
+          <Suspense fallback={<ModalPanelSkeleton />}>
+            <BillingSettings
+              open
+              onClose={closeBillingSettings}
+              onOpenMcp={openMcpFromBilling}
+              onOpenMemory={openMemory}
+              initialSection={settingsSection}
+              selectedModel={selectedModel}
+              onSelectModel={handleSelectModel}
+              projectDefaultModel={activeProject?.settings?.model || null}
+            />
+          </Suspense>
+        ) : null}
+        {isMcpSettingsOpen ? (
+          <Suspense fallback={<ModalPanelSkeleton />}>
+            <McpSettings open onClose={closeMcpSettings} />
+          </Suspense>
+        ) : null}
+        {isAnalyticsOpen ? (
+          <Suspense fallback={<ModalPanelSkeleton maxWidthClass="max-w-[820px]" />}>
+            <AnalyticsPanel
+              open
+              onClose={closeAnalytics}
+              onOpenAdmin={openAdminDashboard}
+            />
+          </Suspense>
+        ) : null}
+        {isAiDashboardOpen ? (
+          <Suspense fallback={<ModalPanelSkeleton maxWidthClass="max-w-[820px]" />}>
+            <AiDashboard
+              open
+              onClose={closeAiDashboard}
+              projects={projects}
+              recentChats={recentChats}
+              onOpenAnalytics={openAnalytics}
+              onOpenMemory={openMemory}
+              onOpenAgents={openAgentsSettings}
+              onOpenVoice={openVoiceMode}
+              onSelectProject={handleSidebarSelectProject}
+              onSelectChat={handleSidebarSelectChat}
+              onStartResearch={handleOpenResearchWorkspace}
+            />
+          </Suspense>
+        ) : null}
+        {isAdminDashboardOpen ? (
+          <Suspense fallback={<ModalPanelSkeleton maxWidthClass="max-w-[820px]" />}>
+            <AdminDashboard open onClose={closeAdminDashboard} />
+          </Suspense>
+        ) : null}
 
-        <Suspense fallback={null}>
-          <BrowserPermissionDialog
-            approval={browserApproval}
-            onResolve={resolveBrowserApprovalChoice}
-          />
-        </Suspense>
+        {browserApproval ? (
+          <Suspense fallback={<DialogSkeleton />}>
+            <BrowserPermissionDialog
+              approval={browserApproval}
+              onResolve={resolveBrowserApprovalChoice}
+            />
+          </Suspense>
+        ) : null}
 
         {/* Browser automation — live preview + step log */}
         <AnimatePresence>
           {browserPanelOpen && browserRun && (
-            <Suspense fallback={null}>
+            <Suspense
+              fallback={
+                <SidePanelSkeleton
+                  widthClass="md:w-[420px] lg:w-[460px]"
+                  className={
+                    workspaceTab === 'automation' ? 'flex' : 'hidden md:flex'
+                  }
+                />
+              }
+            >
               <BrowserPanel
                 run={browserRun}
                 previewUrl={browserPreviewUrl}
@@ -2129,7 +2243,14 @@ export default function ChatPage() {
         {/* Code Interpreter — sandbox editor + output */}
         <AnimatePresence>
           {codePanelOpen && (
-            <Suspense fallback={null}>
+            <Suspense
+              fallback={
+                <SidePanelSkeleton
+                  widthClass="md:w-[460px] lg:w-[520px]"
+                  className="hidden md:flex"
+                />
+              }
+            >
               <CodeInterpreterPanel
                 open={codePanelOpen}
                 onOpenChange={setCodePanelOpen}
@@ -2160,7 +2281,17 @@ export default function ChatPage() {
         {/* Canvas workspace — primary collaborative panel (ChatGPT Canvas + Artifacts hybrid) */}
         <AnimatePresence>
           {isCanvasOpen && canvasTabs.length > 0 && (
-            <Suspense fallback={null}>
+            <Suspense
+              fallback={
+                <SidePanelSkeleton
+                  className={
+                    canvasMobileSurface === 'chat'
+                      ? 'hidden md:flex'
+                      : 'flex w-full md:w-auto'
+                  }
+                />
+              }
+            >
               <CanvasPanel
                 tabs={canvasTabs}
                 activeId={activeCanvasId}
@@ -2204,7 +2335,18 @@ export default function ChatPage() {
         {/* Artifact panel — fallback when Canvas is not open */}
         <AnimatePresence>
           {!isCanvasOpen && isArtifactPanelOpen && activeArtifact && (
-            <Suspense fallback={null}>
+            <Suspense
+              fallback={
+                <SidePanelSkeleton
+                  widthClass="md:w-[480px] lg:w-[520px]"
+                  className={
+                    mobileSurface === 'chat'
+                      ? 'hidden md:flex'
+                      : 'flex w-full md:w-[480px] lg:w-[520px]'
+                  }
+                />
+              }
+            >
               <ArtifactPanel
                 artifact={activeArtifact}
                 isFullscreen={isArtifactFullscreen}

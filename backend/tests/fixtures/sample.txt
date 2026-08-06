@@ -1,0 +1,3 @@
+VANI AI test fixture document.
+This paragraph contains sample text used to validate document parsing (PDF, DOCX).
+Second line of content for extraction checks.

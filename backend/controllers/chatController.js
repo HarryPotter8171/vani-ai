@@ -100,8 +100,8 @@ export const getAllChats = async (req, res) => {
     else filter.project = null; // personal chats outside projects
 
     if (q?.trim()) {
-      const rx = new RegExp(String(q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      filter.$or = [{ title: rx }, { lastMessage: rx }];
+      // Prefer Mongo $text (title + lastMessage text index) over regex scans.
+      filter.$text = { $search: String(q).trim() };
     }
 
     const chats = await Chat.find(filter)
@@ -109,7 +109,8 @@ export const getAllChats = async (req, res) => {
       // (updatedAt desc) is unchanged as the tiebreak/secondary sort.
       .sort({ pinned: -1, updatedAt: -1 })
       .select("_id title lastMessage pinned updatedAt project")
-      .limit(100);
+      .limit(100)
+      .lean();
     res.json(chats);
   } catch (err) {
     console.error(err);
@@ -136,6 +137,14 @@ export const deleteChat = async (req, res) => {
   try {
     const deleted = await Chat.findOneAndDelete({ _id: req.params.id, user: req.user._id });
     if (!deleted) return res.status(404).json({ error: "Chat not found" });
+    // Keep project stats.chatCount accurate (create/update already sync).
+    if (deleted.project) {
+      try {
+        await syncChatCount(deleted.project);
+      } catch (syncErr) {
+        console.warn("[chat/delete] syncChatCount failed:", syncErr?.message || syncErr);
+      }
+    }
     res.json({ message: "Chat deleted", id: req.params.id });
   } catch (err) {
     // Malformed id (e.g. stale/optimistic id) is a 404, not a server error.
@@ -149,7 +158,10 @@ export const deleteChat = async (req, res) => {
 
 export const renameChat = async (req, res) => {
   try {
-    const { title } = req.body;
+    const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+    if (!title) {
+      return res.status(400).json({ error: "Title is required", code: "VALIDATION" });
+    }
     const updated = await Chat.findOneAndUpdate(
       { _id: req.params.id, user: req.user._id },
       { title },
@@ -413,6 +425,8 @@ export const createOrUpdateChat = async (req, res) => {
     preferWebSearch,
     model: requestedModel,
     voiceMode,
+    /** When true, last user turn is a hidden "continue" prompt — merge into prior assistant. */
+    continueGenerating,
   } = req.body;
 
   // Smart Fallback: Agar frontend se array na aakar single message aaye, toh usko handle karo
@@ -466,68 +480,85 @@ export const createOrUpdateChat = async (req, res) => {
   let aiReply = "";
 
   try {
-    // 1. Authenticated user only (req.user from requireAuth)
-    let user = await User.findById(req.user._id);
-    if (!user) {
+    // 1. Reuse req.user when auth already loaded _id + name; otherwise fetch.
+    let user =
+      req.user?._id != null && req.user.name != null
+        ? {
+            _id: req.user._id,
+            email: req.user.email,
+            name: req.user.name,
+          }
+        : await User.findById(req.user._id).select("_id name email");
+    if (!user?._id) {
       send({ error: "Authentication required" });
       return;
     }
 
-    // If updating an existing chat, enforce ownership before streaming work.
-    let existingChat = null;
-    if (chatId) {
-      existingChat = await findOwnedChat(chatId, user._id, "_id model");
-      if (!existingChat) {
-        send({ error: "Chat not found" });
-        return;
-      }
-    }
+    // Content for RAG/memory is stable before hydrate (hydrate enriches attachments).
+    const lastUserContent =
+      (formattedMessages[formattedMessages.length - 1] || {}).content || "";
 
-    // 1b. Resolve uploaded fileIds → attachment bytes/context (multi-file).
-    // Runs before project/RAG so file-aware prompts see the same attachments.
-    formattedMessages = await hydrateChatMessages(formattedMessages, {
-      fileIds,
-      ownerId: user._id,
-    });
-
-    // 2. Resolve optional project + RAG / memory context
-    let project = null;
-    let projectExtras = "";
-    const lastUserMsg = formattedMessages[formattedMessages.length - 1] || {};
-    if (projectId) {
-      project = await getProjectForUser(projectId, user._id);
-      if (!project) {
-        send({ error: "Project not found" });
-        return;
-      }
-      await touchProject(project._id);
-      const built = await buildProjectChatContext(project, lastUserMsg.content || "");
-      projectExtras = built.systemExtras;
-      if (built.ragContext) {
-        send({
-          rag: {
-            used: true,
-            chars: built.ragContext.length,
-          },
-        });
-      }
-    }
-
-    // 2b. Long-term memory retrieval (cached, best-effort — never blocks forever)
-    let memoryExtras = "";
-    try {
-      const memoryBuilt = await Promise.race([
-        buildMemoryPromptExtras(user._id, lastUserMsg.content || ""),
-        new Promise((resolve) =>
-          setTimeout(() => resolve({ extras: "", memories: [] }), 1200)
-        ),
+    // Parallelize independent TTFT work: chat ownership, hydrate, project+RAG, memory.
+    const [existingChatResult, hydrated, projectBundle, memoryBuilt] =
+      await Promise.all([
+        chatId
+          ? findOwnedChat(chatId, user._id, "_id model")
+          : Promise.resolve(null),
+        hydrateChatMessages(formattedMessages, {
+          fileIds,
+          ownerId: user._id,
+        }),
+        projectId
+          ? (async () => {
+              const projectDoc = await getProjectForUser(projectId, user._id);
+              if (!projectDoc) return { error: "Project not found" };
+              await touchProject(projectDoc._id);
+              const built = await buildProjectChatContext(
+                projectDoc,
+                lastUserContent
+              );
+              return { project: projectDoc, built };
+            })()
+          : Promise.resolve(null),
+        Promise.race([
+          buildMemoryPromptExtras(user._id, lastUserContent, {
+            chatId: chatId || null,
+          }).catch((err) => {
+            console.warn("Memory retrieve skipped:", err.message);
+            return { extras: "", memories: [] };
+          }),
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ extras: "", memories: [] }), 1200)
+          ),
+        ]),
       ]);
-      memoryExtras = memoryBuilt?.extras || "";
-      if (memoryBuilt?.memories?.length) {
-        send({ memory: { used: true, count: memoryBuilt.memories.length } });
-      }
-    } catch (err) {
-      console.warn("Memory retrieve skipped:", err.message);
+
+    if (chatId && !existingChatResult) {
+      send({ error: "Chat not found" });
+      return;
+    }
+    const existingChat = existingChatResult;
+
+    formattedMessages = hydrated;
+
+    if (projectBundle?.error) {
+      send({ error: projectBundle.error });
+      return;
+    }
+    const project = projectBundle?.project || null;
+    const projectExtras = projectBundle?.built?.systemExtras || "";
+    if (projectBundle?.built?.ragContext) {
+      send({
+        rag: {
+          used: true,
+          chars: projectBundle.built.ragContext.length,
+        },
+      });
+    }
+
+    const memoryExtras = memoryBuilt?.extras || "";
+    if (memoryBuilt?.memories?.length) {
+      send({ memory: { used: true, count: memoryBuilt.memories.length } });
     }
 
     // 3. Parse attachments → multimodal Gemini contents + DB-safe messages
@@ -535,7 +566,35 @@ export const createOrUpdateChat = async (req, res) => {
     const { contents, persistedMessages } = await prepareMessages(formattedMessages);
     initTools();
 
+    const isContinue = !!continueGenerating;
+    let priorPartialContent = "";
+    if (isContinue) {
+      for (let i = formattedMessages.length - 1; i >= 0; i -= 1) {
+        const m = formattedMessages[i];
+        if (m?.role === "assistant" && typeof m.content === "string" && m.content) {
+          priorPartialContent = m.content;
+          break;
+        }
+      }
+    }
+
     const lastUser = formattedMessages[formattedMessages.length - 1] || {};
+    const lastPersistedUser =
+      [...persistedMessages].reverse().find((m) => m.role === "user") || null;
+
+    // Merge freshly extracted document text onto tool attachments so file_reader
+    // / agents see real PDF content, not metadata-only chips.
+    const toolAttachments = (lastUser.attachments || []).map((att, index) => {
+      const persisted = lastPersistedUser?.attachments?.[index];
+      if (!persisted?.extractedText) return att;
+      return {
+        ...att,
+        extractedText: persisted.extractedText,
+        kind: persisted.kind || att.kind,
+        name: persisted.name || att.name,
+        mimeType: persisted.mimeType || att.mimeType,
+      };
+    });
 
     // All conversation image attachments (hydrated) so edit tools can reach
     // uploads from earlier turns, not only the latest message.
@@ -584,7 +643,7 @@ export const createOrUpdateChat = async (req, res) => {
         userId: user._id,
         userEmail: user.email,
         userName: user.name,
-        attachments: lastUser.attachments || [],
+        attachments: toolAttachments,
         conversationAttachments,
         projectId: project?._id,
         chatId: chatId || null,
@@ -742,7 +801,12 @@ export const createOrUpdateChat = async (req, res) => {
     );
     if (identityFinal !== aiReply) {
       aiReply = identityFinal;
-      if (!clientClosed) send({ delta: aiReply, replace: true });
+      if (!clientClosed) {
+        send({
+          delta: isContinue ? `${priorPartialContent}${aiReply}` : aiReply,
+          replace: true,
+        });
+      }
     }
 
     // Preferred chat name → profile only. Authenticated user.name stays session/JWT-synced.
@@ -756,10 +820,16 @@ export const createOrUpdateChat = async (req, res) => {
 
     // 5. Chat ko save karo — attachments metadata only (no base64)
     let chat;
-    if (aiReply || generatedAttachments.length) {
+    if (aiReply || generatedAttachments.length || (isContinue && priorPartialContent)) {
+      const mergedContent = isContinue
+        ? `${priorPartialContent}${aiReply}`
+        : aiReply || "Here is the generated image.";
+      const interrupted =
+        !!clientClosed && !!(mergedContent || "").trim();
       const assistantMessage = {
         role: "assistant",
-        content: aiReply || "Here is the generated image.",
+        content: mergedContent || "Here is the generated image.",
+        ...(interrupted ? { wasInterrupted: true } : {}),
         ...(generatedAttachments.length
           ? { attachments: generatedAttachments }
           : {}),
@@ -776,7 +846,23 @@ export const createOrUpdateChat = async (req, res) => {
             }
           : {}),
       };
-      const updatedMessages = [...persistedMessages, assistantMessage];
+
+      let updatedMessages;
+      if (isContinue) {
+        // Drop the hidden continue user prompt and replace the truncated assistant.
+        const withoutContinuePrompt = persistedMessages.slice(0, -1);
+        if (
+          withoutContinuePrompt.length &&
+          withoutContinuePrompt[withoutContinuePrompt.length - 1]?.role === "assistant"
+        ) {
+          withoutContinuePrompt[withoutContinuePrompt.length - 1] = assistantMessage;
+          updatedMessages = withoutContinuePrompt;
+        } else {
+          updatedMessages = [...withoutContinuePrompt, assistantMessage];
+        }
+      } else {
+        updatedMessages = [...persistedMessages, assistantMessage];
+      }
 
       const assistantContent = assistantMessage.content;
       const stickyModel =
@@ -821,7 +907,9 @@ export const createOrUpdateChat = async (req, res) => {
       // 6. Background auto-memory — never blocks the SSE response
       const persistedChatId = chat?._id;
       const captureMessages = [
-        ...persistedMessages,
+        ...(isContinue
+          ? updatedMessages.slice(0, -1)
+          : persistedMessages),
         { role: "assistant", content: assistantContent },
       ];
       setImmediate(() => {
@@ -829,7 +917,15 @@ export const createOrUpdateChat = async (req, res) => {
           userId: user._id,
           chatId: persistedChatId,
           messages: captureMessages,
-          userMessage: lastUser.content || "",
+          userMessage: (() => {
+            if (!isContinue) return lastUser.content || "";
+            for (let i = formattedMessages.length - 2; i >= 0; i -= 1) {
+              if (formattedMessages[i]?.role === "user") {
+                return formattedMessages[i].content || "";
+              }
+            }
+            return "";
+          })(),
           assistantReply: assistantContent,
         }).catch((err) => console.warn("Auto memory capture failed:", err.message));
       });

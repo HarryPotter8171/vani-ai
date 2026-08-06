@@ -1,0 +1,161 @@
+{
+  "generatedAt": "2026-08-04T18:06:17.935Z",
+  "samplePdf": "/Users/himanshugupta/vani-ai/frontend/tmp/multilingual-unicode-sample.pdf",
+  "samplePdfBytes": 4268036,
+  "pages": 3,
+  "languages": 59,
+  "fontsRegistered": [
+    {
+      "key": "noto_devanagari",
+      "family": "NotoSansDevanagari",
+      "file": "NotoSansDevanagari-Regular.ttf"
+    },
+    {
+      "key": "noto_gurmukhi",
+      "family": "NotoSansGurmukhi",
+      "file": "NotoSansGurmukhi-Regular.ttf"
+    },
+    {
+      "key": "noto_oriya",
+      "family": "NotoSansOriya",
+      "file": "NotoSansOriya-Regular.ttf"
+    },
+    {
+      "key": "noto_gujarati",
+      "family": "NotoSansGujarati",
+      "file": "NotoSansGujarati-Regular.ttf"
+    },
+    {
+      "key": "noto_tamil",
+      "family": "NotoSansTamil",
+      "file": "NotoSansTamil-Regular.ttf"
+    },
+    {
+      "key": "noto_bengali",
+      "family": "NotoSansBengali",
+      "file": "NotoSansBengali-Regular.ttf"
+    },
+    {
+      "key": "noto_telugu",
+      "family": "NotoSansTelugu",
+      "file": "NotoSansTelugu-Regular.ttf"
+    },
+    {
+      "key": "noto_kannada",
+      "family": "NotoSansKannada",
+      "file": "NotoSansKannada-Regular.ttf"
+    },
+    {
+      "key": "noto_arabic",
+      "family": "NotoSansArabic",
+      "file": "NotoSansArabic-Regular.ttf"
+    },
+    {
+      "key": "noto_malayalam",
+      "family": "NotoSansMalayalam",
+      "file": "NotoSansMalayalam-Regular.ttf"
+    },
+    {
+      "key": "noto_hebrew",
+      "family": "NotoSansHebrew",
+      "file": "NotoSansHebrew-Regular.ttf"
+    },
+    {
+      "key": "noto_thai",
+      "family": "NotoSansThai",
+      "file": "NotoSansThai-Regular.ttf"
+    },
+    {
+      "key": "noto_sinhala",
+      "family": "NotoSansSinhala",
+      "file": "NotoSansSinhala-Regular.ttf"
+    },
+    {
+      "key": "noto_myanmar",
+      "family": "NotoSansMyanmar",
+      "file": "NotoSansMyanmar-Regular.ttf"
+    },
+    {
+      "key": "noto_lao",
+      "family": "NotoSansLao",
+      "file": "NotoSansLao-Regular.ttf"
+    },
+    {
+      "key": "noto_ethiopic",
+      "family": "NotoSansEthiopic",
+      "file": "NotoSansEthiopic-Regular.ttf"
+    },
+    {
+      "key": "noto_khmer",
+      "family": "NotoSansKhmer",
+      "file": "NotoSansKhmer-Regular.ttf"
+    },
+    {
+      "key": "noto_mongolian",
+      "family": "NotoSansMongolian",
+      "file": "NotoSansMongolian-Regular.ttf"
+    },
+    {
+      "key": "noto_sans",
+      "family": "NotoSans",
+      "file": "NotoSans-Regular.ttf"
+    },
+    {
+      "key": "noto_tibetan",
+      "family": "NotoSerifTibetan",
+      "file": "NotoSerifTibetan-Regular.ttf"
+    },
+    {
+      "key": "noto_jp",
+      "family": "NotoSansJP",
+      "file": "NotoSansJP-Regular.ttf"
+    },
+    {
+      "key": "noto_kr",
+      "family": "NotoSansKR",
+      "file": "NotoSansKR-Regular.ttf"
+    }
+  ],
+  "fontAssetsOnDisk": {
+    "count": 24,
+    "totalBytes": 53699740,
+    "totalMB": 51.2,
+    "files": [
+      "NotoSans-Regular.ttf",
+      "NotoSansArabic-Regular.ttf",
+      "NotoSansBengali-Regular.ttf",
+      "NotoSansDevanagari-Regular.ttf",
+      "NotoSansEthiopic-Regular.ttf",
+      "NotoSansGujarati-Regular.ttf",
+      "NotoSansGurmukhi-Regular.ttf",
+      "NotoSansHebrew-Regular.ttf",
+      "NotoSansJP-Regular.ttf",
+      "NotoSansKR-Regular.ttf",
+      "NotoSansKannada-Regular.ttf",
+      "NotoSansKhmer-Regular.ttf",
+      "NotoSansLao-Regular.ttf",
+      "NotoSansMalayalam-Regular.ttf",
+      "NotoSansMongolian-Regular.ttf",
+      "NotoSansMyanmar-Regular.ttf",
+      "NotoSansOriya-Regular.ttf",
+      "NotoSansSC-Regular.ttf",
+      "NotoSansSinhala-Regular.ttf",
+      "NotoSansTC-Regular.ttf",
+      "NotoSansTamil-Regular.ttf",
+      "NotoSansTelugu-Regular.ttf",
+      "NotoSansThai-Regular.ttf",
+      "NotoSerifTibetan-Regular.ttf"
+    ]
+  },
+  "performance": {
+    "fontLoadMs": 502,
+    "drawMs": 48
+  },
+  "notes": [
+    "Fonts are served from /public/fonts/pdf and lazy-loaded per export (not inlined in the JS bundle).",
+    "JS bundle no longer embeds Noto Devanagari base64 (~286 KB savings vs prior approach).",
+    "Tibetan uses Noto Serif Tibetan (no Sans Regular upstream).",
+    "Arabic/Persian/Urdu use presentation-form reshaping + visual BiDi (not full HarfBuzz).",
+    "Complex Indic conjuncts depend on jsPDF glyph cmap; OpenType GSUB shaping is limited."
+  ]
+}

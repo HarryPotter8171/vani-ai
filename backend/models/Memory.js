@@ -13,6 +13,8 @@ export const MEMORY_CATEGORIES = [
 
 export const MEMORY_SOURCES = ["auto", "manual", "tool", "summary"];
 
+export const MEMORY_SCOPES = ["temporary", "long_term", "pinned"];
+
 const MemorySchema = new mongoose.Schema(
   {
     user: {
@@ -63,6 +65,14 @@ const MemorySchema = new mongoose.Schema(
       default: 0.5,
       index: true,
     },
+
+    /** How long this memory should be considered. */
+    scope: {
+      type: String,
+      enum: MEMORY_SCOPES,
+      default: "long_term",
+      index: true,
+    },
     /** Embedding vector for semantic retrieval (text-embedding-004). */
     embedding: {
       type: [Number],
@@ -74,11 +84,49 @@ const MemorySchema = new mongoose.Schema(
       enum: MEMORY_SOURCES,
       default: "manual",
     },
+
+    /**
+     * Source chat id for temporary memories (and best-effort traceability).
+     * Kept for compatibility with existing code that uses `chatId`.
+     */
     chatId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Chat",
       default: null,
       index: true,
+    },
+
+    /**
+     * Spec-aligned alias for `chatId`.
+     * For new writes, this will be populated; for old docs it may be null.
+     */
+    sourceChatId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Chat",
+      default: null,
+      index: true,
+    },
+
+    /** Optional expiry for `scope=temporary`. */
+    expiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    /** 0–1 confidence score for the extractor/decision engine. */
+    confidence: {
+      type: Number,
+      min: 0,
+      max: 1,
+      default: 0.5,
+      index: true,
+    },
+
+    /** Optional machine tags (e.g. "name", "preferred_language"). */
+    tags: {
+      type: [String],
+      default: [],
     },
     /** When true, `content` is AES-GCM ciphertext (see memory/encryption). */
     encrypted: {

@@ -62,6 +62,14 @@ const MessageSchema = new mongoose.Schema(
       },
       default: undefined,
     },
+    /**
+     * True when the client aborted mid-stream and a partial reply was saved.
+     * Enables Continue after reload; omitted/false for completed turns.
+     */
+    wasInterrupted: {
+      type: Boolean,
+      default: undefined,
+    },
   },
   { _id: false }
 );

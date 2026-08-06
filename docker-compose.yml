@@ -1,0 +1,111 @@
+# VANI AI — production-shaped local/self-hosted stack.
+#
+# Usage:
+#   cp backend/.env.example backend/.env.docker   # fill in real secrets
+#   docker compose up --build
+#
+# SECURITY: Mongo and Redis are NOT published to the host. They are reachable
+# only on the Compose internal network (backend → mongo/redis). Publishing
+# unauthenticated 27017/6379 was an RC1 Critical finding (SEC-C2).
+#
+# For local DB debugging only, temporarily bind loopback — never 0.0.0.0:
+#   ports: ["127.0.0.1:27017:27017"]   # under mongo
+#   ports: ["127.0.0.1:6379:6379"]     # under redis
+#
+# All backend config comes from `backend/.env.docker` (see env_file below) so
+# secrets never live in this file or the image. Mongo and Redis are wired
+# with persistent named volumes and healthchecks; the backend/frontend both
+# wait for their dependencies to be healthy before starting.
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # No host ports — internal network only (see header comment).
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # No host ports — internal network only (see header comment).
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - backend/.env.docker
+    environment:
+      NODE_ENV: production
+      PORT: "5001"
+      MONGODB_URI: mongodb://mongo:27017/vani-ai
+      REDIS_URL: redis://redis:6379
+      # Public Beta / multi-tenant: fail closed if Redis is missing.
+      REQUIRE_REDIS: "true"
+      # Optional: set in env_file for deploy correlation (shown on GET /version).
+      # SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - backend-uploads:/app/uploads
+    ports:
+      - "5001:5001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5001/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Override at deploy time for non-localhost clients, e.g.:
+        #   --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.example.com/api
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:5001/api}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+        NEXT_PUBLIC_SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+    restart: unless-stopped
+    env_file:
+      - frontend/.env.docker
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:'+(process.env.PORT||3000)+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 25s
+      retries: 5
+
+
+volumes:
+  mongo-data:
+  redis-data:
+  backend-uploads:

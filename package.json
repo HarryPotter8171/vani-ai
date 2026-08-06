@@ -1,0 +1,15 @@
+{
+  "name": "vani-ai-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Root-level End-to-End (Playwright) test harness for VANI AI. Drives the real frontend + real backend + real database through a full user journey. See e2e/README for details.",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:install": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}

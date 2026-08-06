@@ -1,0 +1,148 @@
+{
+  "sdk": "@google/genai",
+  "sdkVersion": "2.15.0",
+  "model": "gemini-2.5-flash-image",
+  "project": "vani-ai-504209",
+  "location": "global",
+  "apiVersion": "v1",
+  "endpoint": "models.generateContent",
+  "source": {
+    "path": "/Users/himanshugupta/vani-ai/backend/tests/gemini-image-edit-official/outputs/original.jpg",
+    "mimeType": "image/jpeg",
+    "bytes": 502336,
+    "sha256": "8a4877fe592017fcd0526aedcd8b39a44b6af100be682bc7f34cd588cf97c86a"
+  },
+  "runs": [
+    {
+      "id": 1,
+      "instruction": "Remove the white car while keeping everything else identical.",
+      "ok": true,
+      "elapsedMs": 9887,
+      "out": "result_1.png",
+      "savedBytes": 1681850,
+      "mimeType": "image/png",
+      "finishReason": "STOP",
+      "modelText": null,
+      "usage": {
+        "promptTokenCount": 1816,
+        "candidatesTokenCount": 1290,
+        "totalTokenCount": 3106,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 10
+          },
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1806
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1290
+          }
+        ]
+      },
+      "responseId": "a6dxaqv-G-mk7PkPxsPqmAk",
+      "payload": {
+        "model": "gemini-2.5-flash-image",
+        "endpoint": "models.generateContent",
+        "partOrder": [
+          "inlineData",
+          "text"
+        ],
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "instruction": "Remove the white car while keeping everything else identical.",
+        "sourceMime": "image/jpeg",
+        "sourceBytes": 502336
+      }
+    },
+    {
+      "id": 2,
+      "instruction": "Replace only the swimming pool water with snow.",
+      "ok": true,
+      "elapsedMs": 8912,
+      "out": "result_2.png",
+      "savedBytes": 1569013,
+      "mimeType": "image/png",
+      "finishReason": "STOP",
+      "modelText": null,
+      "usage": {
+        "promptTokenCount": 1815,
+        "candidatesTokenCount": 1290,
+        "totalTokenCount": 3105,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1806
+          },
+          {
+            "modality": "TEXT",
+            "tokenCount": 9
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1290
+          }
+        ]
+      },
+      "responseId": "dKdxar7mJNPg8vUPrviP-Qg",
+      "payload": {
+        "model": "gemini-2.5-flash-image",
+        "endpoint": "models.generateContent",
+        "partOrder": [
+          "inlineData",
+          "text"
+        ],
+        "responseModalities": [
+          "TEXT",
+          "IMAGE"
+        ],
+        "instruction": "Replace only the swimming pool water with snow.",
+        "sourceMime": "image/jpeg",
+        "sourceBytes": 502336
+      }
+    },
+    {
+      "id": 3,
+      "instruction": "Change only the shirt color to black.",
+      "ok": true,
+      "elapsedMs": 10453,
+      "out": "result_3.png",
+      "savedBytes": 1688417,
+      "mimeType": "image/png",
+      "finishReason": "STOP",
+      "modelText": null,
+      "usage": {
+        "promptTokenCount": 1814,
+        "candidatesTokenCount": 1290,
+        "totalTokenCount": 3104,
+        "trafficType": "ON_DEMAND",
+        "promptTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1806
+          },
+          {
+            "modality": "TEXT",
+            "tokenCount": 8
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1290
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -25,10 +25,7 @@ import {
   Globe2,
   PanelsTopLeft,
   TerminalSquare,
-  Bot,
-  BookOpen,
   ImageIcon,
-  LayoutDashboard,
   Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -40,19 +37,38 @@ import {
 } from '@/lib/files';
 import ChatHistorySection from '@/components/sidebar/ChatHistorySection';
 import ChatHistoryItem from '@/components/sidebar/ChatHistoryItem';
-import SidebarSearch from '@/components/sidebar/SidebarSearch';
+import SidebarSearchPanel from '@/components/sidebar/SidebarSearchPanel';
 import SidebarNavSection from '@/components/sidebar/SidebarNavSection';
+import { PremiumEmpty } from '@/components/ui/PremiumEmpty';
 import UserMenu from '@/components/auth/UserMenu';
-import ExportMenu from '@/components/chat/ExportMenu';
+import dynamic from 'next/dynamic';
 import ShareMenu from '@/components/chat/ShareMenu';
 import { useThemeContext } from '@/components/layout/ThemeProvider';
 import VaniLogo from '@/components/brand/VaniLogo';
+import {
+  SIDEBAR_WIDTH_COLLAPSED,
+  SIDEBAR_WIDTH_TRANSITION_MS,
+  useSidebarWidth,
+} from '@/hooks/useSidebarWidth';
+import { SPRING } from '@/lib/motion';
+
+/** PDF/export libs stay off the critical path until the user opens export. */
+const ExportMenu = dynamic(() => import('@/components/chat/ExportMenu'), {
+  ssr: false,
+  loading: () => null,
+});
+
+const MOBILE_DRAWER_WIDTH = 300;
 
 export interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   /** Called to reveal the mobile drawer (e.g. from the ⌘K/Ctrl+K shortcut) — a no-op on desktop, where the sidebar is always visible. */
   onOpen?: () => void;
+  /** Desktop icon rail — true = 80px collapsed. */
+  isCollapsed?: boolean;
+  /** Toggles desktop expand/collapse. */
+  onToggleCollapsed?: () => void;
   /** Personal (non-project) chat history — rendered by ChatHistorySection. */
   recentChats?: ChatSummary[];
   isLoadingChats?: boolean;
@@ -149,17 +165,6 @@ const PRIMARY_NAV: { icon: typeof MessageSquare; label: string; action: NavActio
   { icon: MessageSquare, label: 'Chats', action: 'chat' },
   { icon: Search, label: 'Search', action: 'search' },
   { icon: FolderKanban, label: 'Projects', action: 'projects' },
-];
-
-const WORKSPACE_NAV: { icon: typeof MessageSquare; label: string; action: NavAction }[] = [
-  { icon: BookOpen, label: 'Knowledge', action: 'knowledge' },
-  { icon: PanelsTopLeft, label: 'Canvas', action: 'canvas' },
-  { icon: ImageIcon, label: 'Images', action: 'images' },
-  { icon: Search, label: 'Research', action: 'research' },
-  { icon: Zap, label: 'Automation', action: 'automation' },
-  { icon: Bot, label: 'Agents', action: 'agents' },
-  { icon: Brain, label: 'Memory', action: 'memory' },
-  { icon: LayoutDashboard, label: 'Dashboard', action: 'dashboard' },
 ];
 
 interface ProjectListItemProps {
@@ -310,7 +315,7 @@ function ProjectListItem({
                 onCloseMenu();
                 await item.onClick();
               }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-foreground/80 hover:bg-surface-hover"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-caption text-foreground/80 hover:bg-surface-hover"
             >
               <item.icon size={13} strokeWidth={1.75} />
               {item.label}
@@ -326,11 +331,13 @@ function Sidebar({
   isOpen,
   onClose,
   onOpen,
+  isCollapsed = false,
+  onToggleCollapsed,
   recentChats = [],
   isLoadingChats = false,
   chatsError = null,
-  chatsQuery = '',
-  onSearchChats,
+  chatsQuery: _chatsQuery = '',
+  onSearchChats: _onSearchChats,
   onRenameChat,
   onDeleteChat,
   onPinChat,
@@ -389,54 +396,144 @@ function Sidebar({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [activeNav, setActiveNav] = useState<NavAction>('chat');
+  const [isDesktop, setIsDesktop] = useState(true);
+  const [mqReady, setMqReady] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const knowledgeInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const projectsSectionRef = useRef<HTMLElement>(null);
   const historySectionRef = useRef<HTMLDivElement>(null);
+  const {
+    width: expandedWidth,
+    isResizing,
+    resetWidth,
+    onResizeStart,
+  } = useSidebarWidth();
+
+  // Collapse is a desktop icon-rail only — mobile drawer always shows full content.
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const sync = () => {
+      setIsDesktop(mq.matches);
+      setMqReady(true);
+    };
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  const rail = isCollapsed && isDesktop;
+  const desktopWidth = rail ? SIDEBAR_WIDTH_COLLAPSED : expandedWidth;
+  const useMotionDrawer = mqReady && !isDesktop;
 
   const bottomActionClass = cn(
-    'hover-lift flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5',
+    'hover-lift flex w-full items-center rounded-[12px]',
+    rail ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5',
     'text-sidebar font-medium text-text-secondary',
-    'transition-all duration-normal ease-apple',
+    'transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
     'hover:bg-surface-hover hover:text-foreground'
   );
 
   const toolBtnClass = (active: boolean) =>
     cn(
-      'hover-lift flex w-full items-center gap-3 rounded-[12px] px-3 py-2',
-      'text-[13px] font-medium tracking-[-0.014em]',
-      'transition-all duration-normal ease-out',
+      'hover-lift flex w-full items-center rounded-[12px]',
+      rail ? 'justify-center px-0 py-2' : 'gap-3 px-3 py-2',
+      'text-sm font-medium tracking-[-0.014em]',
+      'transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
       active
         ? 'bg-primary/[0.1] text-primary'
         : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'
     );
 
+  const navRowClass = cn('sidebar-row', rail && 'sidebar-row--collapsed');
+
+  const workspaceNav = [
+    ...(onOpenImages ? [{ icon: ImageIcon, label: 'Images', action: 'images' as const }] : []),
+    ...(onOpenCanvasWorkspace || onShowCanvas
+      ? [{ icon: PanelsTopLeft, label: 'Canvas', action: 'canvas' as const }]
+      : []),
+    ...(onOpenAutomation
+      ? [{ icon: Zap, label: 'Browser', action: 'automation' as const }]
+      : []),
+    ...(onOpenMemory ? [{ icon: Brain, label: 'Memory', action: 'memory' as const }] : []),
+    ...(showAnalytics && onOpenAnalytics
+      ? [{ icon: BarChart3, label: 'Analytics', action: 'analytics' as const }]
+      : []),
+  ];
+
+  const hasExportable = messages.some(
+    (m) => m.content.trim() || m.attachments?.length
+  );
+  const hasShare = Boolean(shareableChatId);
   const hasConversationTools =
     (hasCodeInterpreter && onShowCodeInterpreter) ||
     (hasBrowser && onShowBrowser) ||
     (hasCanvas && onShowCanvas) ||
     (hasArtifact && onShowArtifact) ||
-    messages.length > 0 ||
-    !!shareableChatId;
+    hasExportable ||
+    hasShare;
+
+  const expandIfCollapsed = useCallback(() => {
+    if (rail) onToggleCollapsed?.();
+  }, [rail, onToggleCollapsed]);
 
   const handleNewChat = useCallback(() => {
     onNewChat?.();
     if (window.innerWidth < 768) onClose();
   }, [onNewChat, onClose]);
 
-  // Conversation search always targets personal chats, so jumping into it
-  // while a project is open first clears the project filter — otherwise the
-  // list you'd be searching (project chats) wouldn't match what's in the
-  // search box (which only ever queries `recentChats`).
-  const focusSearch = useCallback(() => {
-    if (activeProjectId) onSelectProject?.(null);
-    if (window.innerWidth < 768) onOpen?.();
-    requestAnimationFrame(() => {
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-    });
-  }, [activeProjectId, onSelectProject, onOpen]);
+  // Conversation search opens a floating panel over the app — not an inline box.
+  const openSearch = useCallback(() => {
+    setActiveNav('search');
+    setSearchOpen(true);
+    if (window.innerWidth < 768) onClose();
+  }, [onClose]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setActiveNav((nav) => (nav === 'search' ? 'chat' : nav));
+  }, []);
+
+  const handleWorkspaceAction = useCallback(
+    (action: NavAction) => {
+      setActiveNav(action);
+      const closeMobile = () => {
+        if (window.innerWidth < 768) onClose();
+      };
+      if (action === 'canvas') {
+        (onOpenCanvasWorkspace || onShowCanvas)?.();
+        closeMobile();
+        return;
+      }
+      if (action === 'images') {
+        onOpenImages?.();
+        closeMobile();
+        return;
+      }
+      if (action === 'automation') {
+        onOpenAutomation?.();
+        closeMobile();
+        return;
+      }
+      if (action === 'memory') {
+        onOpenMemory?.();
+        closeMobile();
+        return;
+      }
+      if (action === 'analytics') {
+        onOpenAnalytics?.();
+        closeMobile();
+      }
+    },
+    [
+      onClose,
+      onOpenCanvasWorkspace,
+      onShowCanvas,
+      onOpenImages,
+      onOpenAutomation,
+      onOpenMemory,
+      onOpenAnalytics,
+    ]
+  );
 
   // Global shortcuts: ⌘⇧O / Ctrl+Shift+O starts a new chat.
   // ⌘K / Ctrl+K is owned by the command palette (global search).
@@ -496,196 +593,248 @@ function Sidebar({
       )
     : projects;
 
+  /** Hide projects with no chats and no files (unless pinned or active). */
+  const listedProjects = (projectQuery
+    ? visibleProjects
+    : [...pinnedProjects, ...visibleProjects.filter((p) => !p.pinned)]
+  )
+    .filter((p, i, arr) => arr.findIndex((x) => x._id === p._id) === i)
+    .filter((p) => {
+      if (p.pinned || p._id === activeProjectId) return true;
+      if (!p.stats) return true;
+      const chats = p.stats.chatCount ?? 0;
+      const files = p.stats.fileCount ?? 0;
+      return chats > 0 || files > 0;
+    })
+    .slice(0, 20);
+
   return (
     <>
       <AnimatePresence>
-        {isOpen && (
+        {isOpen && !isDesktop ? (
           <motion.div
+            key="sidebar-backdrop"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
+            transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
             className="fixed inset-0 z-40 modal-overlay md:hidden"
             onClick={onClose}
- />
-        )}
+            aria-hidden
+          />
+        ) : null}
       </AnimatePresence>
 
-      <aside
+      <motion.aside
         className={cn(
           'fixed z-50 flex flex-col',
-          'inset-y-0 left-0 w-[280px] md:w-auto',
-          'transition-transform duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
-          isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
-          'md:relative md:shrink-0 md:py-4 md:pl-4 md:pr-0'
+          'inset-y-0 left-0',
+          /* Mobile drawer width; desktop width set via style */
+          'w-[min(300px,86vw)]',
+          'md:w-auto',
+          isDesktop &&
+            'transition-[width] duration-[220ms] ease-[cubic-bezier(0.23,1,0.32,1)]',
+          isResizing && 'duration-0',
+          /* Before mq resolves (and on desktop): CSS transform like the original.
+             After mq resolves on mobile: framer-motion owns X for swipe. */
+          !useMotionDrawer &&
+            (isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'),
+          useMotionDrawer &&
+            cn('will-change-transform touch-pan-y', !isOpen && 'pointer-events-none'),
+          'md:relative md:shrink-0 md:py-4',
+          rail ? 'md:pl-2 md:pr-2' : 'md:pl-4 md:pr-0'
         )}
+        style={
+          isDesktop
+            ? {
+                width: desktopWidth,
+                transitionDuration: isResizing
+                  ? '0ms'
+                  : `${SIDEBAR_WIDTH_TRANSITION_MS}ms`,
+              }
+            : { width: MOBILE_DRAWER_WIDTH }
+        }
+        initial={false}
+        animate={
+          useMotionDrawer
+            ? { x: isOpen ? 0 : -MOBILE_DRAWER_WIDTH - 24 }
+            : { x: 0 }
+        }
+        transition={useMotionDrawer ? SPRING.snappy : { duration: 0 }}
+        drag={useMotionDrawer && isOpen ? 'x' : false}
+        dragConstraints={{ left: -MOBILE_DRAWER_WIDTH, right: 0 }}
+        dragElastic={{ left: 0.12, right: 0.02 }}
+        dragMomentum={false}
+        onDragEnd={(_, info) => {
+          if (!useMotionDrawer) return;
+          if (info.offset.x < -72 || info.velocity.x < -420) {
+            onClose();
+          }
+        }}
+        data-state={isOpen ? 'open' : 'closed'}
+        data-collapsed={rail || undefined}
+        data-sidebar-width={isDesktop ? desktopWidth : MOBILE_DRAWER_WIDTH}
+        aria-hidden={useMotionDrawer && !isOpen ? true : undefined}
       >
         <div
           className={cn(
-            'flex h-full flex-col overflow-hidden',
+            'relative flex h-full w-full flex-col overflow-hidden',
             'bg-surface-glass',
             'backdrop-blur-[var(--blur-glass)] backdrop-saturate-[1.8]',
             'border border-border',
             'shadow-2',
-            'md:h-[calc(100vh-32px)] md:w-[272px]',
-            'rounded-none md:rounded-[var(--radius-lg)]'
+            'md:h-[calc(100vh-32px)]',
+            'rounded-none md:rounded-[var(--radius-lg)]',
+            'max-md:pt-[env(safe-area-inset-top,0px)] max-md:pb-[env(safe-area-inset-bottom,0px)]'
           )}
         >
-          {/* Brand */}
-          <div className="flex items-center gap-3 px-4 pt-5 pb-3">
-            <VaniLogo size="sm" glow />
-            <div className="min-w-0">
-              <div className="text-[15px] font-semibold tracking-[-0.028em] text-foreground">
-                VANI
+          {/* Brand + New Chat — stacked, never overlapping */}
+          <div
+            className={cn(
+              'flex shrink-0 flex-col',
+              rail ? 'items-center gap-3 px-2 pt-4 pb-3' : 'gap-3.5 px-3.5 pt-4 pb-3'
+            )}
+          >
+            {rail ? (
+              <VaniLogo size="sm" glow />
+            ) : (
+              <div className="flex w-full min-w-0 items-center gap-3">
+                <div className="shrink-0">
+                  <VaniLogo size="sm" glow />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-body font-semibold leading-tight tracking-[-0.028em] text-foreground">
+                    VANI
+                  </div>
+                  <div className="mt-0.5 truncate text-micro font-medium leading-tight tracking-[-0.01em] text-text-tertiary">
+                    AI Operating System
+                  </div>
+                </div>
               </div>
-              <div className="text-[11px] font-medium tracking-[-0.01em] text-text-tertiary">
-                AI Operating System
-              </div>
-            </div>
-          </div>
+            )}
 
-          {/* Search */}
-          <SidebarSearch ref={searchInputRef} value={chatsQuery} onChange={(q) => onSearchChats?.(q)} />
-
-          {/* New Chat */}
-          <div className="px-3 pb-3">
             <button
               type="button"
               onClick={handleNewChat}
               className={cn(
-                'btn-ripple group flex w-full items-center justify-between rounded-full',
+                'btn-ripple group flex shrink-0 items-center',
+                rail
+                  ? 'h-10 w-10 justify-center rounded-full'
+                  : 'w-full justify-between rounded-full px-4 py-2.5',
                 'bg-accent text-text-on-accent',
-                'px-4 py-2.5 text-[14px] font-semibold tracking-[-0.016em]',
-                'shadow-[0_4px_20px_rgba(107,92,255,0.28)]',
-                'transition-all duration-normal ease-apple',
-                'hover:bg-accent-hover hover:shadow-[0_6px_28px_rgba(107,92,255,0.36)] active:scale-[0.985]'
+                'text-sidebar font-semibold tracking-[-0.016em]',
+                'shadow-[0_4px_20px_var(--accent-glow)]',
+                'transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
+                'hover:bg-accent-hover hover:shadow-[0_6px_28px_var(--accent-glow)] active:scale-[0.985]'
               )}
+              aria-label="New Chat"
+              title="New Chat"
             >
-              <span className="flex items-center gap-2.5">
-                <Plus size={15} strokeWidth={2.25} />
-                New Chat
-              </span>
-              <span
-                className={cn(
-                  'rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
-                  'bg-white/18 text-text-on-accent/90'
-                )}
-              >
-                ⌘⇧O
-              </span>
+              {rail ? (
+                <Plus size={18} strokeWidth={2.25} />
+              ) : (
+                <>
+                  <span className="flex items-center gap-2.5">
+                    <Plus size={15} strokeWidth={2.25} />
+                    New Chat
+                  </span>
+                  <span
+                    className={cn(
+                      'rounded-md px-1.5 py-0.5 text-micro font-semibold tabular-nums',
+                      'bg-white/18 text-text-on-accent/90'
+                    )}
+                  >
+                    ⌘⇧O
+                  </span>
+                </>
+              )}
             </button>
           </div>
 
-          <div className="vani-divider mx-4" />
+          {!rail ? <div className="vani-divider mx-4" /> : null}
 
           {/* AI */}
-          <SidebarNavSection id="ai" title="AI" className="px-1.5">
-            <nav className="space-y-0.5 px-1" aria-label="AI">
+          <SidebarNavSection
+            id="ai"
+            title="AI"
+            className={cn('px-1.5', rail && '[&_.sidebar-section-trigger]:hidden')}
+            defaultOpen
+          >
+            <nav className={cn('space-y-0.5', rail ? 'px-1' : 'px-1')} aria-label="AI">
               {PRIMARY_NAV.map(({ icon: Icon, label, action }) => (
                 <button
                   key={label}
                   type="button"
                   data-active={activeNav === action}
+                  title={label}
+                  aria-label={label}
                   onClick={() => {
                     if (action === 'chat') {
                       setActiveNav('chat');
+                      expandIfCollapsed();
                       onSelectProject?.(null);
-                      historySectionRef.current?.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start',
+                      requestAnimationFrame(() => {
+                        historySectionRef.current?.scrollIntoView({
+                          behavior: 'smooth',
+                          block: 'start',
+                        });
                       });
                       if (window.innerWidth < 768) onClose();
                       return;
                     }
                     if (action === 'search') {
-                      setActiveNav('search');
-                      focusSearch();
+                      openSearch();
                       return;
                     }
                     if (action === 'projects') {
                       setActiveNav('projects');
-                      projectsSectionRef.current?.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start',
+                      expandIfCollapsed();
+                      requestAnimationFrame(() => {
+                        projectsSectionRef.current?.scrollIntoView({
+                          behavior: 'smooth',
+                          block: 'start',
+                        });
                       });
-                      return;
                     }
                   }}
-                  className="sidebar-row"
+                  className={navRowClass}
                 >
                   <Icon size={16} strokeWidth={1.75} />
-                  {label}
+                  {!rail ? label : null}
                 </button>
               ))}
             </nav>
           </SidebarNavSection>
 
           {/* More — secondary workspace destinations, collapsed by default */}
-          <SidebarNavSection id="more" title="More" defaultOpen={false} className="px-1.5">
-            <nav className="space-y-0.5 px-1" aria-label="More">
-              {[
-                ...WORKSPACE_NAV,
-                ...(showAnalytics
-                  ? [{ icon: BarChart3, label: 'Analytics', action: 'analytics' as const }]
-                  : []),
-              ].map(({ icon: Icon, label, action }) => (
+          {rail ? (
+            workspaceNav.length > 0 ? (
+            <nav className="mt-1 space-y-0.5 px-1" aria-label="More">
+              {workspaceNav.map(({ icon: Icon, label, action }) => (
                 <button
                   key={label}
                   type="button"
                   data-active={activeNav === action}
-                  onClick={() => {
-                    setActiveNav(action);
-                    const closeMobile = () => {
-                      if (window.innerWidth < 768) onClose();
-                    };
-
-                    if (action === 'knowledge') {
-                      onOpenKnowledge?.();
-                      closeMobile();
-                      return;
-                    }
-                    if (action === 'canvas') {
-                      (onOpenCanvasWorkspace || onShowCanvas)?.();
-                      closeMobile();
-                      return;
-                    }
-                    if (action === 'images') {
-                      onOpenImages?.();
-                      closeMobile();
-                      return;
-                    }
-                    if (action === 'research') {
-                      onOpenResearch?.();
-                      closeMobile();
-                      return;
-                    }
-                    if (action === 'automation') {
-                      onOpenAutomation?.();
-                      closeMobile();
-                      return;
-                    }
-                    if (action === 'agents') {
-                      (onOpenAgents || onOpenSettings)?.();
-                      closeMobile();
-                      return;
-                    }
-                    if (action === 'memory') {
-                      onOpenMemory?.();
-                      closeMobile();
-                      return;
-                    }
-                    if (action === 'dashboard') {
-                      onOpenDashboard?.();
-                      closeMobile();
-                      return;
-                    }
-                    if (action === 'analytics') {
-                      onOpenAnalytics?.();
-                      closeMobile();
-                      return;
-                    }
-                  }}
-                  className="sidebar-row"
+                  title={label}
+                  aria-label={label}
+                  onClick={() => handleWorkspaceAction(action)}
+                  className={navRowClass}
+                >
+                  <Icon size={16} strokeWidth={1.75} />
+                </button>
+              ))}
+            </nav>
+            ) : null
+          ) : workspaceNav.length > 0 ? (
+          <SidebarNavSection id="more" title="More" defaultOpen={false} className="px-1.5">
+            <nav className="space-y-0.5 px-1" aria-label="More">
+              {workspaceNav.map(({ icon: Icon, label, action }) => (
+                <button
+                  key={label}
+                  type="button"
+                  data-active={activeNav === action}
+                  onClick={() => handleWorkspaceAction(action)}
+                  className={navRowClass}
                 >
                   <Icon size={16} strokeWidth={1.75} />
                   {label}
@@ -693,14 +842,21 @@ function Sidebar({
               ))}
             </nav>
           </SidebarNavSection>
+          ) : null}
 
-          <div className="vani-divider mx-4 mt-1" />
+          {!rail ? <div className="vani-divider mx-4 mt-1" /> : null}
 
           {/* Projects + Recent chats */}
-          <div className="custom-scrollbar mt-2 flex-1 space-y-5 overflow-y-auto px-2.5 py-1">
+          <div
+            className={cn(
+              'custom-scrollbar mt-2 flex-1 space-y-5 overflow-y-auto py-1',
+              rail ? 'hidden' : 'px-2.5'
+            )}
+          >
             <SidebarNavSection
               id="projects"
               title="Projects"
+              defaultOpen={false}
               trailing={
                 <button
                   type="button"
@@ -715,6 +871,7 @@ function Sidebar({
               <section ref={projectsSectionRef}>
 
               <div className="mb-2 px-1">
+                {projects.length > 0 || projectQuery ? (
                 <div className="relative">
                   <Search
                     size={12}
@@ -730,12 +887,13 @@ function Sidebar({
                     className={cn(
                       'w-full rounded-[12px] bg-surface-hover',
                       'border border-transparent py-1.5 pl-8 pr-3',
-                      'text-[12px] tracking-[-0.014em] text-foreground outline-none',
+                      'text-caption tracking-[-0.014em] text-foreground',
                       'placeholder:text-muted-foreground/40',
                       'focus:border-black/[0.06] dark:focus:border-white/[0.08]'
                     )}
  />
                 </div>
+                ) : null}
               </div>
 
               {creating && (
@@ -751,21 +909,21 @@ function Sidebar({
                     placeholder="Project name"
                     className={cn(
                       'min-w-0 flex-1 rounded-[12px] bg-surface-hover',
-                      'px-3 py-1.5 text-[12.5px] outline-none'
+                      'px-3 py-1.5 text-sm'
                     )}
  />
                   <button
                     type="button"
                     onClick={() => void submitCreate()}
-                    className="rounded-full bg-primary px-2.5 py-1.5 text-[11px] font-medium text-white"
+                    className="rounded-full bg-primary px-2.5 py-1.5 text-micro font-medium text-white"
                   >
                     Add
                   </button>
                 </div>
               )}
 
-              {!!pinnedProjects.length && !projectQuery && (
-                <div className="mb-1.5 px-3.5 text-[10px] font-medium tracking-[0.04em] text-muted-foreground/35">
+              {!!pinnedProjects.length && !projectQuery && listedProjects.some((p) => p.pinned) && (
+                <div className="mb-1.5 px-3.5 text-micro font-medium tracking-[0.04em] text-muted-foreground/35">
                   Pinned
                 </div>
               )}
@@ -787,10 +945,7 @@ function Sidebar({
                   <span className="truncate">Personal chats</span>
                 </button>
 
-                {(projectQuery ? visibleProjects : [...pinnedProjects, ...visibleProjects.filter((p) => !p.pinned)])
-                  .filter((p, i, arr) => arr.findIndex((x) => x._id === p._id) === i)
-                  .slice(0, 20)
-                  .map((project) => (
+                {listedProjects.map((project) => (
                     <ProjectListItem
                       key={project._id}
                       project={project}
@@ -839,7 +994,7 @@ function Sidebar({
                         key={chat.id}
                         chat={chat}
                         isActive={activeChatId === chat.id}
-                        query={chatsQuery}
+                        query=""
                         onSelect={(id) => {
                           onSelectChat?.(id);
                           if (window.innerWidth < 768) onClose();
@@ -850,9 +1005,13 @@ function Sidebar({
  />
                     ))
                   ) : (
-                    <p className="px-3.5 py-2 text-[12px] text-muted-foreground/50">
-                      No chats in this project yet.
-                    </p>
+                    <PremiumEmpty
+                      size="sm"
+                      icon={MessageSquare}
+                      title="No chats in this project yet"
+                      description="Start a conversation to see it here."
+                      className="px-2 py-4"
+                    />
                   )}
                 </div>
               </section>
@@ -862,7 +1021,7 @@ function Sidebar({
                   chats={recentChats}
                   isLoading={isLoadingChats}
                   error={chatsError}
-                  query={chatsQuery}
+                  query=""
                   activeChatId={activeChatId}
                   onSelectChat={(id) => {
                     onSelectChat?.(id);
@@ -874,10 +1033,11 @@ function Sidebar({
                   hasMore={hasMoreChats}
                   isLoadingMore={isLoadingMoreChats}
                   onLoadMore={onLoadMoreChats}
- />
+                />
               </div>
             )}
           </div>
+          {rail ? <div className="min-h-0 flex-1" aria-hidden /> : null}
 
           <input
             ref={knowledgeInputRef}
@@ -889,8 +1049,13 @@ function Sidebar({
  />
 
           {/* Bottom — Tools · Personal */}
-          <div className="mt-auto space-y-0.5 border-t border-divider px-2.5 py-3">
-            {hasConversationTools && (
+          <div
+            className={cn(
+              'mt-auto space-y-0.5 border-t border-divider py-3',
+              rail ? 'px-1.5' : 'px-2.5'
+            )}
+          >
+            {hasConversationTools && !rail && (
               <SidebarNavSection id="tools" title="Tools" className="mb-1">
                 <div className="space-y-0.5 px-0.5">
                 {hasCodeInterpreter && onShowCodeInterpreter && (
@@ -945,16 +1110,129 @@ function Sidebar({
                     Artifact
                   </button>
                 )}
-                {(messages.length > 0 || shareableChatId) && (
+                {(hasShare || hasExportable) && (
                   <div className="flex items-center gap-1 px-1 pt-1">
-                    <ShareMenu chatId={shareableChatId} />
-                    <ExportMenu messages={messages} conversationTitle={conversationTitle} />
+                    {hasShare ? <ShareMenu chatId={shareableChatId} /> : null}
+                    {hasExportable ? (
+                      <ExportMenu messages={messages} conversationTitle={conversationTitle} />
+                    ) : null}
                   </div>
                 )}
                 </div>
               </SidebarNavSection>
             )}
 
+            {hasConversationTools && rail && (
+              <div className="mb-1 space-y-0.5">
+                {hasCodeInterpreter && onShowCodeInterpreter ? (
+                  <button
+                    type="button"
+                    title="Code"
+                    aria-label="Code"
+                    onClick={() => {
+                      onShowCodeInterpreter();
+                      if (window.innerWidth < 768) onClose();
+                    }}
+                    className={toolBtnClass(isCodeInterpreterOpen)}
+                  >
+                    <TerminalSquare size={15} strokeWidth={1.75} />
+                  </button>
+                ) : null}
+                {hasBrowser && onShowBrowser ? (
+                  <button
+                    type="button"
+                    title="Browser"
+                    aria-label="Browser"
+                    onClick={() => {
+                      onShowBrowser();
+                      if (window.innerWidth < 768) onClose();
+                    }}
+                    className={toolBtnClass(isBrowserOpen)}
+                  >
+                    <Globe2 size={15} strokeWidth={1.75} />
+                  </button>
+                ) : null}
+                {hasCanvas && onShowCanvas ? (
+                  <button
+                    type="button"
+                    title="Canvas"
+                    aria-label="Canvas"
+                    onClick={() => {
+                      onShowCanvas();
+                      if (window.innerWidth < 768) onClose();
+                    }}
+                    className={toolBtnClass(isCanvasOpen)}
+                  >
+                    <PanelsTopLeft size={15} strokeWidth={1.75} />
+                  </button>
+                ) : null}
+                {hasArtifact && onShowArtifact ? (
+                  <button
+                    type="button"
+                    title="Artifact"
+                    aria-label="Artifact"
+                    onClick={() => {
+                      onShowArtifact();
+                      if (window.innerWidth < 768) onClose();
+                    }}
+                    className={toolBtnClass(isArtifactOpen)}
+                  >
+                    <FileCode2 size={15} strokeWidth={1.75} />
+                  </button>
+                ) : null}
+              </div>
+            )}
+
+            {rail ? (
+              <div className="space-y-0.5">
+                <div className="flex justify-center py-1">
+                  <UserMenu variant="sidebar" className="w-auto [&>button]:w-auto [&>button]:justify-center [&>button]:rounded-full [&>button]:p-1.5 [&_.min-w-0]:hidden [&_svg]:hidden" />
+                </div>
+                <button
+                  type="button"
+                  title="Settings"
+                  onClick={() => {
+                    onOpenSettings?.();
+                    if (window.innerWidth < 768) onClose();
+                  }}
+                  className={bottomActionClass}
+                  aria-label="Settings"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-[9px] bg-surface-hover text-text-secondary">
+                    <Settings size={14} strokeWidth={1.75} />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  title="VANI Pro"
+                  onClick={() => {
+                    (onOpenBilling || onOpenSettings)?.();
+                    if (window.innerWidth < 768) onClose();
+                  }}
+                  className={bottomActionClass}
+                  aria-label="VANI Pro"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-[9px] bg-accent-muted text-accent">
+                    <Crown size={14} strokeWidth={2} />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  className={bottomActionClass}
+                  aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+                  title="Theme"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-[9px] bg-surface-hover text-text-secondary">
+                    {mounted && theme === 'dark' ? (
+                      <Sun size={14} strokeWidth={1.75} />
+                    ) : (
+                      <Moon size={14} strokeWidth={1.75} />
+                    )}
+                  </span>
+                </button>
+              </div>
+            ) : (
             <SidebarNavSection id="personal" title="Personal" defaultOpen>
               <div className="space-y-0.5 px-0.5">
             <UserMenu variant="sidebar" />
@@ -1006,9 +1284,62 @@ function Sidebar({
             </button>
               </div>
             </SidebarNavSection>
+            )}
           </div>
         </div>
-      </aside>
+
+        {/* Desktop resize handle — right edge; double-click resets to default */}
+        {isDesktop && !rail ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            aria-valuemin={70}
+            aria-valuemax={360}
+            aria-valuenow={expandedWidth}
+            title="Drag to resize · Double-click to reset"
+            className={cn(
+              'absolute inset-y-4 right-0 z-20 hidden w-1.5 translate-x-1/2 cursor-col-resize md:block',
+              'group/resize touch-none'
+            )}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.preventDefault();
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              onResizeStart(e.clientX);
+            }}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              resetWidth();
+            }}
+          >
+            <span
+              className={cn(
+                'pointer-events-none absolute inset-y-8 left-1/2 w-px -translate-x-1/2 rounded-full',
+                'bg-border opacity-0 transition-opacity duration-150',
+                'group-hover/resize:opacity-100 group-active/resize:opacity-100',
+                isResizing && 'opacity-100 bg-accent'
+              )}
+            />
+          </div>
+        ) : null}
+      </motion.aside>
+
+      <SidebarSearchPanel
+        open={searchOpen}
+        onClose={closeSearch}
+        chats={recentChats}
+        projects={projects}
+        onSelectChat={(id) => {
+          onSelectChat?.(id);
+          if (window.innerWidth < 768) onClose();
+        }}
+        onSelectProject={(id) => {
+          onSelectProject?.(id);
+          if (window.innerWidth < 768) onClose();
+        }}
+        onOpenMemory={onOpenMemory}
+      />
     </>
   );
 }

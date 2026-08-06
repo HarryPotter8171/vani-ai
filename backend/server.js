@@ -83,8 +83,9 @@ if (isRedisConfigured()) {
 }
 
 const PORT = process.env.PORT || 5001;
-const httpServer = app.listen(PORT, () => {
-  logger.info(`Backend running on port ${PORT}`);
+const HOST = process.env.HOST || "0.0.0.0";
+const httpServer = app.listen(PORT, HOST, () => {
+  logger.info(`Backend running on http://${HOST}:${PORT}`);
   startMemoryCleanupScheduler();
 });
 

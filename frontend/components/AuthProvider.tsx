@@ -8,7 +8,12 @@ import { SessionProvider } from "next-auth/react";
  */
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider refetchOnWindowFocus refetchWhenOffline={false}>
+    <SessionProvider
+      refetchOnWindowFocus
+      refetchWhenOffline={false}
+      // Avoid an unbounded session spin on flaky mobile networks.
+      refetchInterval={0}
+    >
       {children}
     </SessionProvider>
   );

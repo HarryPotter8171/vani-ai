@@ -55,6 +55,8 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
+  /** True when the user stopped generation mid-reply — enables Continue. */
+  wasInterrupted?: boolean;
   attachments?: MessageAttachment[];
   meta?: MessageMeta;
   usage?: MessageUsage;

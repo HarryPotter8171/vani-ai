@@ -111,7 +111,7 @@ function SegmentedControl({
         disabled={!previewEnabled}
         onClick={() => onChange('preview')}
         className={cn(
-          'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+          'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-micro font-medium transition-colors',
           value === 'preview'
             ? 'bg-white text-foreground shadow-sm dark:bg-white/[0.12]'
             : 'text-muted-foreground hover:text-foreground disabled:opacity-35'
@@ -128,7 +128,7 @@ function SegmentedControl({
           disabled={!previewEnabled}
           onClick={() => onChange('split')}
           className={cn(
-            'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+            'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-micro font-medium transition-colors',
             value === 'split'
               ? 'bg-white text-foreground shadow-sm dark:bg-white/[0.12]'
               : 'text-muted-foreground hover:text-foreground disabled:opacity-35'
@@ -144,7 +144,7 @@ function SegmentedControl({
         aria-selected={value === 'code'}
         onClick={() => onChange('code')}
         className={cn(
-          'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+          'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-micro font-medium transition-colors',
           value === 'code'
             ? 'bg-white text-foreground shadow-sm dark:bg-white/[0.12]'
             : 'text-muted-foreground hover:text-foreground'
@@ -376,10 +376,10 @@ function ArtifactPanelInner({
               <FileCode2 size={14} strokeWidth={2.25} />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-[13.5px] font-medium tracking-[-0.01em] text-foreground">
+              <div className="truncate text-sm font-medium tracking-[-0.01em] text-foreground">
                 {artifact.title}
               </div>
-              <div className="text-[11px] text-muted-foreground">
+              <div className="text-micro text-muted-foreground">
                 {info.label}
                 {artifact.isStreaming ? ' · Generating…' : ` · ${lineCount} lines`}
                 {isDirty ? ' · Edited' : ''}

@@ -21,10 +21,16 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   viewportFit: 'cover',
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0c0c0f' },
+    { media: '(prefers-color-scheme: light)', color: '#f2f0eb' },
+  ],
 };
 
 /** Prevents theme flash — dark is the default. Also restores appearance prefs. */
-const themeInitScript = `(function(){try{var t=localStorage.getItem('vani-theme');var d=t!=='light';var r=document.documentElement;r.classList.toggle('dark',d);r.classList.toggle('light',!d);r.style.colorScheme=d?'dark':'light';var a=JSON.parse(localStorage.getItem('vani-appearance')||'{}');if(a.radius)r.dataset.radius=a.radius;if(a.motion)r.dataset.motion=a.motion;if(a.density)r.dataset.density=a.density;if(a.glass)r.dataset.glass=a.glass;if(a.wallpaper)r.dataset.wallpaper=a.wallpaper;}catch(e){document.documentElement.classList.add('dark');}})();`;
+const themeInitScript = `(function(){try{var t=localStorage.getItem('vani-theme');var d=t==='light'?false:t==='dark'?true:(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);var r=document.documentElement;r.classList.toggle('dark',d);r.classList.toggle('light',!d);r.style.colorScheme=d?'dark':'light';var a=JSON.parse(localStorage.getItem('vani-appearance')||'{}');if(a.radius)r.dataset.radius=a.radius;if(a.motion)r.dataset.motion=a.motion;if(a.density)r.dataset.density=a.density;if(a.glass)r.dataset.glass=a.glass;if(a.wallpaper)r.dataset.wallpaper=a.wallpaper;}catch(e){document.documentElement.classList.add('dark');}})();`;
 
 export default function RootLayout({
   children,

@@ -1,0 +1,5 @@
+VANI AI end-to-end test document.
+
+This file is uploaded by the Playwright user-journey test to exercise the
+real document upload + parsing pipeline (chat attachment -> backend file
+storage -> text extraction) without needing a real AI provider.

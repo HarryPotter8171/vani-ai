@@ -18,22 +18,26 @@ import AttachmentPreview from '@/components/chat/AttachmentPreview';
 import AttachmentLightbox from '@/components/chat/AttachmentLightbox';
 import ComposerPlusMenu from '@/components/chat/ComposerPlusMenu';
 import { useFileUpload } from '@/hooks/useFileUpload';
+import { useVisualViewport } from '@/hooks/useVisualViewport';
+import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { ACCEPT_ATTRIBUTE, IMAGE_ACCEPT_ATTRIBUTE } from '@/lib/files';
 import type { MessageAttachment, PendingAttachment } from '@/lib/types';
 import type { AgentTypeId, AgentTypeInfo } from '@/lib/agents';
+import { CompactControlSkeleton } from '@/components/lazy/PanelSkeletons';
 
 const AgentSelector = dynamic(() => import('@/components/agents/AgentSelector'), {
   ssr: false,
-  loading: () => null,
+  loading: () => <CompactControlSkeleton />,
 });
 
 const ModelSelector = dynamic(() => import('@/components/models/ModelSelector'), {
   ssr: false,
-  loading: () => null,
+  loading: () => <CompactControlSkeleton className="w-[7.5rem] max-md:w-[7.5rem]" />,
 });
 
 export interface ChatInputHandle {
   ingestFiles: (files: FileList | File[], source?: 'drop' | 'upload' | 'paste') => void;
+  focus: () => void;
 }
 
 export interface ChatInputProps {
@@ -60,6 +64,11 @@ export interface ChatInputProps {
   projectDefaultModel?: string | null;
   /** Optional AI Dock / productivity strip rendered above the composer. */
   dock?: React.ReactNode;
+  /**
+   * floating — overlays the bottom of the chat pane (default).
+   * inline — sits in normal flow under the home greeting (no huge empty gap).
+   */
+  placement?: 'floating' | 'inline';
   /**
    * When provided, file drops show contextual actions instead of attaching
    * immediately. Caller receives the FileList and must handle ingestion.
@@ -89,6 +98,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   onSelectModel,
   projectDefaultModel = null,
   dock,
+  placement = 'floating',
   onFilesDropped,
 },
   ref
@@ -102,6 +112,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
+  const isDesktop = useIsDesktop();
+  const { keyboardInset } = useVisualViewport();
+  /** Only lift the composer for the soft keyboard on mobile. */
+  const keyboardOffset = !isDesktop ? keyboardInset : 0;
 
   const {
     attachments,
@@ -120,6 +134,9 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     () => ({
       ingestFiles: (files, source = 'drop') => {
         void ingestFiles(files, source);
+      },
+      focus: () => {
+        textareaRef.current?.focus();
       },
     }),
     [ingestFiles]
@@ -252,11 +269,14 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   const canSend = (input.trim().length > 0 || hasReady) && !isLoading && !isReading;
 
   const controlBtnClass = cn(
-    'hover-lift flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+    'hover-lift flex shrink-0 items-center justify-center rounded-full',
+    /* 44px touch targets on mobile */
+    'h-10 w-10 max-md:h-11 max-md:w-11 md:h-8 md:w-8',
     'text-muted-foreground/70',
     'transition-all duration-normal ease-out',
     'hover:bg-surface-hover hover:text-foreground',
-    'disabled:cursor-not-allowed disabled:opacity-40'
+    'disabled:cursor-not-allowed disabled:opacity-40',
+    'touch-manipulation'
   );
 
   const enableWebSearch = (v: boolean) => {
@@ -272,16 +292,58 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   const hasExtra =
     attachments.length > 0 || webSearchEnabled || deepResearchEnabled;
 
+  const isInline = placement === 'inline';
+
   return (
     <>
       <div
         ref={rootRef}
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] sm:px-5 sm:pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] md:px-6"
+        data-testid="chat-composer"
+        style={
+          keyboardOffset > 0
+            ? {
+                bottom: keyboardOffset,
+                transform: 'translateZ(0)',
+                paddingBottom: '0.5rem',
+              }
+            : undefined
+        }
+        className={cn(
+          isInline
+            ? cn(
+                // Desktop empty-home: inline under the hero (unchanged).
+                'relative z-10 mx-auto mt-10 w-full max-w-[800px] px-0',
+                // Mobile: pin to the visual viewport like ChatGPT/Gemini —
+                // absolute/inline inside h-screen was clipped by overflow:hidden.
+                'max-md:pointer-events-none max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[45]',
+                'max-md:mx-0 max-md:mt-0 max-md:flex max-md:w-full max-md:max-w-none max-md:justify-center',
+                'max-md:px-3 max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]',
+                'max-md:transition-[bottom] max-md:duration-150 max-md:ease-out'
+              )
+            : cn(
+                // Desktop conversation: absolute within the chat column.
+                'pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center',
+                'pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-[calc(1.75rem+env(safe-area-inset-bottom,0px))]',
+                // Mobile: fixed to the visual viewport so 100vh chrome can't hide it.
+                'max-md:fixed max-md:z-[45] max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]',
+                'max-md:px-3',
+                'max-md:transition-[bottom] max-md:duration-150 max-md:ease-out'
+              )
+        )}
       >
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-background via-background/75 to-transparent" />
+        {!isInline ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-background via-background/75 to-transparent" />
+        ) : null}
 
-        <div className="pointer-events-auto relative w-full max-w-[760px]">
-          {dock}
+        <div
+          className={cn(
+            'relative w-full',
+            isInline
+              ? 'pointer-events-auto max-w-none max-md:w-full'
+              : 'pointer-events-auto vani-chat-column'
+          )}
+        >
+          {!isInline ? dock : null}
           <form
             onSubmit={handleSubmit}
             onDragEnter={handleDragEnter}
@@ -289,14 +351,15 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             onDragOver={handleDragOver}
             onDrop={handleDrop}
             className={cn(
-              'relative flex w-full flex-col',
-              hasExtra ? 'rounded-[28px]' : 'rounded-full',
+              'vani-composer relative flex w-full flex-col',
+              'rounded-full',
               'bg-surface-input',
               'backdrop-blur-[var(--blur-glass)] backdrop-saturate-[1.8]',
-              'border border-border',
-              'shadow-2',
-              'transition-[background-color,box-shadow,border-color,border-radius] duration-normal ease-apple',
-              'focus-within:border-accent/35 focus-within:shadow-focus',
+              'border border-border/70',
+              'shadow-[0_2px_12px_rgba(0,0,0,0.04),0_1px_2px_rgba(0,0,0,0.03)]',
+              'dark:shadow-[0_4px_20px_rgba(0,0,0,0.28),0_1px_3px_rgba(0,0,0,0.18)]',
+              'transition-[background-color,box-shadow,border-color] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]',
+              hasExtra && 'rounded-[28px]',
               isDragging && 'border-accent/45 bg-accent-muted shadow-focus'
             )}
           >
@@ -325,10 +388,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                     <Upload size={18} strokeWidth={2.25} />
                   </motion.div>
                   <div className="text-center">
-                    <p className="text-[13.5px] font-semibold tracking-[-0.015em] text-accent">
+                    <p className="text-sm font-semibold tracking-[-0.015em] text-accent">
                       Drop to attach
                     </p>
-                    <p className="mt-0.5 text-[11.5px] text-text-secondary">
+                    <p className="mt-0.5 text-micro text-text-secondary">
                       Images, PDFs, docs & more
                     </p>
                   </div>
@@ -410,11 +473,11 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               )}
             </AnimatePresence>
 
-            {/* Single lightweight row ≈ 54px */}
+            {/* Single lightweight row ≈ 56–60px */}
             <div
               className={cn(
-                'flex w-full items-center gap-0.5 px-1.5',
-                hasExtra ? 'min-h-[52px] py-1.5' : 'h-[54px]'
+                'flex w-full items-center gap-1 px-2.5',
+                hasExtra ? 'min-h-[56px] py-2' : 'h-[56px]'
               )}
             >
               <ComposerPlusMenu
@@ -441,12 +504,13 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 aria-label="Message input"
                 className={cn(
                   'min-w-0 flex-1 resize-none bg-transparent',
-                  'py-2 text-[15px] leading-[1.4] tracking-[-0.014em]',
+                  'py-2.5 text-chat leading-[1.5] tracking-[-0.014em]',
                   'text-foreground',
                   'placeholder:text-muted-foreground/38',
-                  'outline-none border-none ring-0 focus:ring-0 focus-visible:shadow-none',
+                  /* Focus ring lives on the form shell (focus-within + --focus-ring) */
+                  'outline-none border-none',
                   'disabled:cursor-not-allowed disabled:opacity-50',
-                  'custom-scrollbar overflow-y-auto'
+                  'custom-scrollbar overflow-y-auto transition-[height] duration-150 ease-out'
                 )}
                 style={{ height: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT }}
  />
@@ -480,7 +544,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                     controlBtnClass,
                     onOpenVoiceMode && !isLoading && 'hover:text-primary'
                   )}
-                  aria-label="Start Live Mode"
+                  aria-label="Start voice mode"
                   title="Live Mode"
                 >
                   <Mic size={17} strokeWidth={1.75} />
@@ -490,10 +554,12 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                   type="submit"
                   disabled={!canSend && !isLoading}
                   className={cn(
-                    'hover-lift flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+                    'hover-lift flex shrink-0 items-center justify-center rounded-full',
+                    'h-10 w-10 max-md:h-11 max-md:w-11 md:h-8 md:w-8',
                     'transition-all duration-normal ease-apple',
+                    'touch-manipulation',
                     canSend
-                      ? 'bg-accent text-text-on-accent shadow-[0_1px_2px_rgba(107,92,255,0.2),0_4px_14px_rgba(107,92,255,0.32)] hover:bg-accent-hover'
+                      ? 'bg-accent text-text-on-accent shadow-[0_1px_2px_var(--accent-muted),0_4px_14px_var(--accent-glow)] hover:bg-accent-hover'
                       : isLoading
                         ? 'bg-accent/85 text-text-on-accent'
                         : 'bg-surface-hover text-text-tertiary/40 cursor-not-allowed'
@@ -524,7 +590,7 @@ function ActiveModeChip({ label, onClear }: { label: string; onClear: () => void
       onClick={onClear}
       className={cn(
         'inline-flex h-6 items-center gap-1 rounded-full px-2.5',
-        'text-[12px] font-medium tracking-[-0.01em]',
+        'text-caption font-medium tracking-[-0.01em]',
         'bg-primary/[0.1] text-primary',
         'transition-colors duration-normal ease-out hover:bg-primary/[0.16]'
       )}

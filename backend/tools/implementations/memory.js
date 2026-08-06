@@ -5,7 +5,14 @@ import {
   saveMemory,
   isMemoryEnabled,
   forgetMemory,
+  exportMemories,
+  deleteAllMemories,
+  updateMemoryScope,
 } from "../../services/memory/index.js";
+import {
+  decideMemoryWrite,
+  shouldPersistDecision,
+} from "../../services/memory/memoryDecisionEngine.js";
 
 export const memoryTool = {
   id: "memory",
@@ -18,7 +25,7 @@ export const memoryTool = {
     properties: {
       action: {
         type: "string",
-        enum: ["save", "recall", "list", "delete", "forget"],
+        enum: ["save", "recall", "list", "delete", "forget", "pin", "unpin", "clear_all", "export", "import"],
         description: "Memory operation",
       },
       key: {
@@ -43,6 +50,11 @@ export const memoryTool = {
         ],
         description: "Optional category when saving",
       },
+      scope: {
+        type: "string",
+        enum: ["long_term", "temporary", "pinned"],
+        description: "Optional memory scope when action is save",
+      },
       content: {
         type: "string",
         description: "Free-form content for forget (snippet to match)",
@@ -50,6 +62,10 @@ export const memoryTool = {
       memoryId: {
         type: "string",
         description: "Memory id when deleting/forgetting a specific entry",
+      },
+      payload: {
+        type: "string",
+        description: "Export/Import payload for import/export actions",
       },
     },
     required: ["action"],
@@ -75,12 +91,53 @@ export const memoryTool = {
 
       switch (action) {
         case "save": {
-          const saved = await saveMemory(userId, args.key, args.value, {
+          const value = args.value;
+          if (!value?.trim()) {
+            return { ok: false, error: "save requires value", action };
+          }
+          if (args.scope === "temporary") {
+            const saved = await saveMemory(userId, args.key, value, {
+              category: args.category,
+              source: "tool",
+              chatId: ctx.chatId || null,
+              scope: "temporary",
+              metadata: {
+                decisionReason: "explicit temporary save",
+                decision: "TEMPORARY",
+              },
+            });
+            return { ok: true, action, memory: saved, persisted: true };
+          }
+
+          const decision = await decideMemoryWrite({
+            content: value,
+            category: args.category,
+            contextText: ctx.lastUserMessage || ctx.userMessage || "",
+            scope: args.scope,
+            source: "tool",
+          });
+          if (!shouldPersistDecision(decision)) {
+            return {
+              ok: false,
+              action,
+              error:
+                "This looks like a one-time or temporary detail, so it was not saved as long-term memory. Ask the user to say “remember this” only if they truly want it kept.",
+              decision: decision.decision,
+              reason: decision.reason,
+            };
+          }
+          const saved = await saveMemory(userId, args.key, value, {
             category: args.category,
             source: "tool",
             chatId: ctx.chatId || null,
+            scope: decision.scope || args.scope || "long_term",
+            confidence: decision.confidence,
+            metadata: {
+              decisionReason: decision.reason || "",
+              decision: decision.decision,
+            },
           });
-          return { ok: true, action, memory: saved };
+          return { ok: true, action, memory: saved, persisted: true };
         }
         case "recall": {
           const memory = await recallMemory(userId, args.key);
@@ -102,6 +159,11 @@ export const memoryTool = {
               key: m.key,
               value: m.content,
               category: m.category,
+              scope: m.scope,
+              expiresAt: m.expiresAt,
+              confidence: m.confidence,
+              tags: m.tags,
+              sourceChatId: m.sourceChatId,
               updatedAt: m.updatedAt,
             })),
           };
@@ -118,6 +180,58 @@ export const memoryTool = {
             chatId: ctx.chatId || null,
           });
           return { ok: true, action, ...result };
+        }
+        case "pin": {
+          const target = args.memoryId || args.key;
+          if (!target) return { ok: false, error: "pin requires memoryId or key", action };
+          const id =
+            args.memoryId ||
+            (await recallMemory(userId, args.key))?.id;
+          if (!id) return { ok: false, error: "Memory not found to pin", action };
+          const updated = await updateMemoryScope(userId, id, "pinned");
+          return { ok: true, action, memory: updated };
+        }
+        case "unpin": {
+          const target = args.memoryId || args.key;
+          if (!target) return { ok: false, error: "unpin requires memoryId or key", action };
+          const id =
+            args.memoryId ||
+            (await recallMemory(userId, args.key))?.id;
+          if (!id) return { ok: false, error: "Memory not found to unpin", action };
+          const updated = await updateMemoryScope(userId, id, "long_term");
+          return { ok: true, action, memory: updated };
+        }
+        case "clear_all": {
+          const result = await deleteAllMemories(userId);
+          return { ok: true, action, ...result };
+        }
+        case "export": {
+          const payload = await exportMemories(userId);
+          return { ok: true, action, payload };
+        }
+        case "import": {
+          let parsed = null;
+          try {
+            parsed = args.payload ? JSON.parse(args.payload) : null;
+          } catch {
+            parsed = null;
+          }
+          if (!parsed?.memories || !Array.isArray(parsed.memories)) {
+            return { ok: false, error: "import requires payload.memories[]", action };
+          }
+          // Best-effort: createMemory will dedupe by key/embedding.
+          let created = 0;
+          for (const m of parsed.memories) {
+            if (!m?.content) continue;
+            await saveMemory(userId, m.key, m.content, {
+              category: m.category,
+              source: "manual",
+              importance: m.importance,
+              chatId: ctx.chatId || null,
+            });
+            created += 1;
+          }
+          return { ok: true, action, created };
         }
         default:
           return { ok: false, error: `Unknown memory action: ${action}` };

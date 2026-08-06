@@ -1,0 +1,23 @@
+{
+  "result_1.png": {
+    "people": 20.2,
+    "car_zone": 29.91,
+    "pool_center": 8.78,
+    "building": 21.4,
+    "mountains": 19.26
+  },
+  "result_2.png": {
+    "people": 122.19,
+    "car_zone": 24.82,
+    "pool_center": 137.95,
+    "building": 75.87,
+    "mountains": 20.07
+  },
+  "result_3.png": {
+    "people": 19.47,
+    "car_zone": 34.46,
+    "pool_center": 9.14,
+    "building": 22.23,
+    "mountains": 22.22
+  }
+}

@@ -106,21 +106,49 @@
   --radius-pill: 9999px;
   --radius-msg: calc(var(--radius-base) * 1.1 * 1px);
 
-  /* ── Typography scale ── */
-  --text-display-xl: 56px;
-  --text-display: 40px;
-  --text-heading: 28px;
-  --text-title: 17px;
-  --text-body: 15px;
-  --text-caption: 12px;
-  --text-xs: 12px;
-  --text-sm: 13px;
-  --text-base: 15px;
-  --text-chat: 15px;
-  --text-assistant: 15px;
-  --text-lg: 20px;
-  --text-sidebar: 14px;
-  --text-subtitle: 17px;
+  /* ── Typography scale (source: --type-*; --text-* size aliases for legacy CSS) ── */
+  --type-display-xl: 56px;
+  --type-display: 40px;
+  --type-heading: 28px;
+  --type-title: 17px;
+  --type-lg: 20px;
+  --type-assistant: 16px;
+  --type-chat: 15.5px;
+  --type-body: 15px;
+  --type-user: 15px;
+  --type-sidebar: 14px;
+  --type-sm: 13px;
+  --type-caption: 12px;
+  --type-meta: 12px;
+  --type-xs: 12px;
+  --type-micro: 11px;
+  --type-subtitle: 17px;
+
+  --text-display-xl: var(--type-display-xl);
+  --text-display: var(--type-display);
+  --text-heading: var(--type-heading);
+  --text-title: var(--type-title);
+  --text-body: var(--type-body);
+  --text-caption: var(--type-caption);
+  --text-micro: var(--type-micro);
+  --text-xs: var(--type-xs);
+  --text-sm: var(--type-sm);
+  --text-base: var(--type-body);
+  --text-chat: var(--type-chat);
+  /* Conversation column — shared by messages + composer */
+  --chat-column-max: 800px;
+  --chat-column-pad-x: 24px;
+  --text-assistant: var(--type-assistant);
+  --text-user: var(--type-user);
+  --text-meta: var(--type-meta);
+  --text-lg: var(--type-lg);
+  --text-sidebar: var(--type-sidebar);
+  --text-subtitle: var(--type-subtitle);
+  /* Brand / display: system SF first (no var(--font-inter) here — it is body-scoped
+     via next/font and would invalidate this custom property on :root). */
+  --font-display-stack: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    system-ui, sans-serif;
+  --font-display: var(--font-display-stack);
 
   /* ── Spacing — strict 8-point ── */
   --space-1: 4px;
@@ -154,7 +182,9 @@
   --focus-ring: 0 0 0 3px rgba(107, 92, 255, 0.3);
 
   /* ── Fonts ── */
-  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+  /* var(--font-inter, …) keeps --font-sans valid on :root before next/font applies */
+  --font-sans: var(--font-inter, -apple-system), -apple-system, BlinkMacSystemFont,
+    "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
 
   /* ── Backward-compatible aliases ── */
@@ -333,8 +363,74 @@ html[data-glass="strong"] { --blur-glass: 40px; --glass-intensity: 1.25; }
   --radius-lg: var(--radius-lg);
   --radius-pill: var(--radius-pill);
 
-  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --font-sans: var(--font-inter, -apple-system), -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+
+  /* Typography scale → text-* utilities (overrides default TW sizes) */
+  --text-micro: var(--type-micro);
+  --text-micro--line-height: 1.35;
+  --text-micro--letter-spacing: -0.006em;
+
+  --text-caption: var(--type-caption);
+  --text-caption--line-height: 1.4;
+  --text-caption--letter-spacing: -0.008em;
+
+  --text-xs: var(--type-xs);
+  --text-xs--line-height: 1.4;
+  --text-xs--letter-spacing: -0.008em;
+
+  --text-sm: var(--type-sm);
+  --text-sm--line-height: 1.45;
+  --text-sm--letter-spacing: -0.01em;
+
+  --text-sidebar: var(--type-sidebar);
+  --text-sidebar--line-height: 1.45;
+  --text-sidebar--letter-spacing: -0.014em;
+
+  --text-body: var(--type-body);
+  --text-body--line-height: 1.55;
+  --text-body--letter-spacing: -0.014em;
+
+  --text-base: var(--type-body);
+  --text-base--line-height: 1.55;
+  --text-base--letter-spacing: -0.014em;
+
+  --text-chat: var(--type-chat);
+  --text-chat--line-height: 1.6;
+  --text-chat--letter-spacing: -0.014em;
+
+  --text-assistant: var(--type-assistant);
+  --text-assistant--line-height: 1.65;
+  --text-assistant--letter-spacing: -0.014em;
+
+  --text-title: var(--type-title);
+  --text-title--line-height: 1.3;
+  --text-title--letter-spacing: -0.022em;
+
+  --text-lg: var(--type-lg);
+  --text-lg--line-height: 1.3;
+  --text-lg--letter-spacing: -0.022em;
+
+  --text-heading: var(--type-heading);
+  --text-heading--line-height: 1.2;
+  --text-heading--letter-spacing: -0.032em;
+
+  --text-xl: var(--type-heading);
+  --text-xl--line-height: 1.2;
+  --text-xl--letter-spacing: -0.032em;
+
+  --text-display: var(--type-display);
+  --text-display--line-height: 1.1;
+  --text-display--letter-spacing: -0.04em;
+
+  --text-2xl: var(--type-display);
+  --text-2xl--line-height: 1.1;
+  --text-2xl--letter-spacing: -0.04em;
+
+  --text-display-xl: var(--type-display-xl);
+  --text-display-xl--line-height: 1.05;
+  --text-display-xl--letter-spacing: -0.045em;
 
   --animate-fade-up: fade-up var(--duration-enter) var(--ease-apple) forwards;
   --animate-scale-in: scale-in var(--duration-enter) var(--ease-smooth) forwards;
@@ -365,9 +461,14 @@ html[data-glass="strong"] { --blur-glass: 40px; --glass-intensity: 1.25; }
 html {
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
+  height: 100%;
+  height: 100dvh;
 }
 
 body {
+  /* Resolve Inter here (next/font sets --font-inter on body); :root cannot see it. */
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "SF Pro Text", system-ui, sans-serif;
   background: var(--background);
   color: var(--text-primary);
   font-family: var(--font-sans);
@@ -378,7 +479,13 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  height: 100%;
+  height: 100dvh;
   overflow: hidden;
+  /* iOS: keep the app shell inside the visual viewport */
+  position: fixed;
+  inset: 0;
+  width: 100%;
 }
 
 ::selection {
@@ -388,18 +495,21 @@ body {
 
 /* Typography utilities */
 .type-display-xl {
+  font-family: var(--font-display);
   font-size: var(--text-display-xl);
   font-weight: 600;
   letter-spacing: -0.045em;
   line-height: 1.05;
 }
 .type-display {
+  font-family: var(--font-display);
   font-size: var(--text-display);
   font-weight: 600;
   letter-spacing: -0.04em;
   line-height: 1.1;
 }
 .type-heading {
+  font-family: var(--font-display);
   font-size: var(--text-heading);
   font-weight: 600;
   letter-spacing: -0.032em;
@@ -423,6 +533,18 @@ body {
   letter-spacing: -0.008em;
   line-height: 1.4;
   color: var(--text-secondary);
+}
+.type-label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+.type-micro {
+  font-size: var(--text-micro);
+  font-weight: 500;
+  letter-spacing: -0.006em;
+  line-height: 1.35;
 }
 
 /* Ambient background — breathing mesh + floating light blobs */
@@ -627,15 +749,38 @@ a:focus-visible,
 [role="button"]:focus-visible,
 [role="option"]:focus-visible,
 [role="menuitem"]:focus-visible,
-[role="tab"]:focus-visible {
+[role="tab"]:focus-visible,
+[role="switch"]:focus-visible,
+[role="menuitemcheckbox"]:focus-visible,
+[role="menuitemradio"]:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
   outline-offset: 2px;
 }
 
+/* Form fields + editors — same token accent ring (do not suppress) */
 textarea:focus-visible,
-input:focus-visible,
-select:focus-visible {
+input:focus-visible:not([type='file']):not([type='hidden']):not([type='checkbox']):not([type='radio']),
+select:focus-visible,
+[contenteditable='true']:focus-visible,
+[role='textbox']:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: 2px;
+}
+
+/* When a control must keep outline-none (nested/transparent), pair with this */
+.focus-ring-token:focus-visible {
   outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Composer shell — visible keyboard focus without outlining the inner textarea */
+.vani-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06), var(--focus-ring);
+}
+
+html.dark .vani-composer:focus-within {
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.35), var(--focus-ring);
 }
 
 .hover-lift {
@@ -717,6 +862,16 @@ select:focus-visible {
 .sidebar-row[data-active="true"]::before {
   height: 16px;
   opacity: 1;
+}
+
+.sidebar-row--collapsed {
+  justify-content: center;
+  gap: 0;
+  padding: 10px 0;
+}
+
+.sidebar-row--collapsed::before {
+  left: 2px;
 }
 
 .action-card {
@@ -1128,7 +1283,7 @@ select:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-4) var(--space-5);
+  padding: 16px 20px;
   border-bottom: 1px solid var(--divider);
 }
 
@@ -1158,16 +1313,43 @@ select:focus-visible {
   background: var(--scrollbar-thumb-hover);
 }
 
+/* Shared conversation + composer column — keeps every turn on one axis */
+.vani-chat-column {
+  width: 100%;
+  max-width: var(--chat-column-max);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--chat-column-pad-x);
+  padding-right: var(--chat-column-pad-x);
+  box-sizing: border-box;
+}
+
+@media (max-width: 420px) {
+  :root {
+    --chat-column-pad-x: 12px;
+  }
+}
+
 .prose-vani {
   color: var(--text-primary);
   font-size: var(--text-assistant);
-  line-height: 1.7;
+  line-height: 1.75;
   letter-spacing: -0.014em;
   font-weight: 400;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .prose-vani > *:first-child { margin-top: 0; }
 .prose-vani > *:last-child { margin-bottom: 0; }
+
+.prose-vani p { margin: 0 0 1em; }
+
+.tts-paragraph-active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
 
 .prose-vani h1 {
   font-size: 1.35em;
@@ -1191,8 +1373,6 @@ select:focus-visible {
   letter-spacing: -0.016em;
   margin: 1.05rem 0 0.4rem;
 }
-
-.prose-vani p { margin: 0.85rem 0; }
 
 .prose-vani ul,
 .prose-vani ol {
@@ -1272,17 +1452,50 @@ select:focus-visible {
   content: "";
   display: inline-block;
   width: 2.5px;
-  height: 1.1em;
+  height: 1.15em;
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--accent) 70%, white) 0%,
+    color-mix(in srgb, var(--accent) 75%, white) 0%,
     var(--accent) 100%
   );
   margin-left: 3px;
   vertical-align: text-bottom;
   border-radius: 2px;
-  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 50%, transparent);
   animation: cursor-pulse 1.05s var(--ease-smooth) infinite;
+  will-change: opacity, transform;
+}
+
+/* Soft content containment while tokens arrive — reduces markdown remount flicker. */
+.streaming-text {
+  contain: content;
+}
+
+.streaming-text .prose-vani > :last-child {
+  margin-bottom: 0;
+}
+
+@keyframes thinking-aura-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.92);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.05);
+    box-shadow: 0 0 18px 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+}
+
+.thinking-aura {
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 22%, transparent) 0%,
+    transparent 70%
+  );
+  animation: thinking-aura-pulse 2.2s var(--ease-smooth) infinite;
+  will-change: opacity, transform;
 }
 
 @keyframes cursor-blink {
@@ -1300,8 +1513,17 @@ select:focus-visible {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes vani-msg-user-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .msg-enter {
-  animation: vani-msg-in var(--duration-enter) var(--ease-apple) both;
+  animation: vani-msg-in 200ms var(--ease-apple) both;
+}
+
+.msg-enter-user {
+  animation: vani-msg-user-in 200ms var(--ease-apple) both;
 }
 
 @keyframes vani-img-in {
@@ -1499,6 +1721,59 @@ select:focus-visible {
   margin: var(--space-2) 0;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   Mobile chat — premium phone experience (≤767px only)
+   Desktop layout & design language are intentionally untouched.
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 767px) {
+  :root {
+    --chat-column-pad-x: 14px;
+    --text-assistant: 15.5px;
+    --text-user: 15.5px;
+    --text-chat: 16px;
+  }
+
+  /* Promote compositor layers for the hot path only */
+  .msg-enter,
+  .msg-enter-user {
+    animation-duration: 180ms;
+  }
+
+  /* Hide scrollbars in the conversation — more ChatGPT-like */
+  .custom-scrollbar {
+    scrollbar-width: none;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  /* Larger tap targets for sidebar rows */
+  .sidebar-row {
+    min-height: 44px;
+  }
+
+  /* Composer: slightly roomier on phone */
+  [data-testid="chat-composer"] form {
+    min-height: 56px;
+  }
+
+  /* Reduce paint cost from ambient blobs while scrolling chat */
+  .app-background-blobs {
+    opacity: 0.55;
+  }
+}
+
+/* Contain layout for message rows — smoother virtualized scroll */
+@media (max-width: 767px) {
+  .msg-enter,
+  .msg-enter-user {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 72px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1510,6 +1785,7 @@ select:focus-visible {
   }
 
   .msg-enter,
+  .msg-enter-user,
   .img-fade-in,
   .page-enter {
     animation: none !important;
@@ -1534,6 +1810,7 @@ select:focus-visible {
   .vani-spinner,
   .streaming-cursor::after,
   .streaming-cursor-inline,
+  .thinking-aura,
   .dnd-overlay,
   .mini-chart span {
     animation: none !important;

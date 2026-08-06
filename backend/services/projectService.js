@@ -192,6 +192,10 @@ export async function listKnowledgeFiles(projectId, userId) {
 export async function removeKnowledgeFile(projectId, userId, fileId) {
   const project = await getProjectForUser(projectId, userId);
   if (!project) throw new Error("Project not found");
+  // Avoid CastError -> 500 on malformed ids; treat as not found for callers.
+  if (!mongoose.Types.ObjectId.isValid(fileId)) {
+    throw new Error("File not found");
+  }
 
   const file = await ProjectFile.findOne({ _id: fileId, project: projectId });
   if (!file) throw new Error("File not found");

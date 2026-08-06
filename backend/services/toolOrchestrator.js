@@ -386,6 +386,7 @@ export async function* runToolAgent({
     const responseParts = [];
     const ctx = {
       ...toolContext,
+      userMessage,
       contents: workingContents,
       signal,
       hasVision,

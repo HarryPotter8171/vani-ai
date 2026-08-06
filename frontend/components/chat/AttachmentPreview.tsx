@@ -229,7 +229,7 @@ function ImagePreviewCard({
           )}
  />
       ) : (
-        <div className="flex h-full w-full items-center justify-center text-[11px] text-muted-foreground">
+        <div className="flex h-full w-full items-center justify-center text-micro text-muted-foreground">
           Image
         </div>
       )}
@@ -241,7 +241,7 @@ function ImagePreviewCard({
           className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/45 backdrop-blur-[2px]"
         >
           <Spinner size={16} tone="inverse" label="Processing" />
-          <span className="text-[10px] font-medium text-white/90">
+          <span className="text-micro font-medium text-white/90">
             {isAnalyzing ? 'Analyzing…' : `${attachment.progress}%`}
           </span>
           {!isAnalyzing && (
@@ -254,7 +254,7 @@ function ImagePreviewCard({
 
       {isError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-red-950/55 px-1.5 backdrop-blur-[1px]">
-          <span className="text-[10px] font-medium text-red-100">Failed</span>
+          <span className="text-micro font-medium text-red-100">Failed</span>
           <button
             type="button"
             onClick={(e) => {
@@ -263,7 +263,7 @@ function ImagePreviewCard({
             }}
             className={cn(
               'flex items-center gap-1 rounded-full px-2 py-0.5',
-              'bg-white/90 text-[10px] font-semibold text-red-600',
+              'bg-white/90 text-micro font-semibold text-red-600',
               'hover:bg-white transition-colors'
             )}
           >
@@ -350,19 +350,19 @@ function PdfPreviewCard({
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/35 backdrop-blur-[1px]">
             <Spinner size={16} tone="inverse" label="Processing" />
             {isAnalyzing && (
-              <span className="text-[9px] font-medium text-white/90">Analyzing…</span>
+              <span className="text-micro font-medium text-white/90">Analyzing…</span>
             )}
           </div>
         )}
       </div>
 
       <div className="px-2 pb-2 pt-1">
-        <p className="truncate text-[10.5px] font-medium tracking-[-0.01em] text-foreground/90">
+        <p className="truncate text-micro font-medium tracking-[-0.01em] text-foreground/90">
           {attachment.name}
         </p>
         <p
           className={cn(
-            'truncate text-[10px]',
+            'truncate text-micro',
             isError ? 'text-red-500' : 'text-muted-foreground/70'
           )}
         >
@@ -391,7 +391,7 @@ function PdfPreviewCard({
             }}
             className={cn(
               'flex items-center gap-1 rounded-full px-2 py-0.5',
-              'bg-white/90 text-[10px] font-semibold text-red-600',
+              'bg-white/90 text-micro font-semibold text-red-600',
               'hover:bg-white transition-colors'
             )}
           >
@@ -550,12 +550,12 @@ export default function AttachmentPreview({
               </div>
 
               <div className="min-w-0 flex-1 pr-5">
-                <p className="truncate text-[12.5px] font-medium tracking-[-0.01em] text-foreground">
+                <p className="truncate text-sm font-medium tracking-[-0.01em] text-foreground">
                   {att.name}
                 </p>
                 <p
                   className={cn(
-                    'truncate text-[11px] tracking-[-0.01em]',
+                    'truncate text-micro tracking-[-0.01em]',
                     isError ? 'text-red-500' : 'text-muted-foreground/70'
                   )}
                 >
@@ -585,7 +585,7 @@ export default function AttachmentPreview({
                     }}
                     className={cn(
                       'mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5',
-                      'bg-red-500/10 text-[10.5px] font-semibold text-red-600',
+                      'bg-red-500/10 text-micro font-semibold text-red-600',
                       'hover:bg-red-500/15 dark:text-red-400 transition-colors'
                     )}
                   >

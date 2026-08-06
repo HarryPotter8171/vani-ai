@@ -42,7 +42,7 @@ export const fileReaderTool = {
   name: "file_reader",
   displayName: "File Reader",
   description:
-    "Read and extract content from files the user attached in this chat (PDF text sections, DOCX, CSV, XLSX, TXT, Markdown, ZIP extracts). Use when you need to inspect file contents explicitly.",
+    "Read and extract content from files the user attached in this chat (PDF text sections, DOCX, CSV, XLSX, TXT, Markdown, ZIP extracts). Use when you need to inspect file contents explicitly. Prefer this for large documents that were chunked in the main prompt — call repeatedly with increasing offset/limit and keep solving until the whole document/exam is finished; do not ask the user to continue.",
   schema: {
     type: "object",
     properties: {
@@ -53,6 +53,14 @@ export const fileReaderTool = {
       instruction: {
         type: "string",
         description: "Optional focus instruction, e.g. 'summarize sheet 2' or 'list headers'",
+      },
+      offset: {
+        type: "number",
+        description: "Optional character offset into extracted text for large documents",
+      },
+      limit: {
+        type: "number",
+        description: "Optional max characters to return (default 60000)",
       },
     },
     additionalProperties: false,
@@ -89,16 +97,28 @@ export const fileReaderTool = {
 
     const pieces = [];
     for (const att of selected) {
-      if (att.extractedText) {
-        pieces.push(`--- File: ${att.name} ---\n${att.extractedText}`);
+      let text = att.extractedText || "";
+
+      // Lazy-extract PDF/DOC text when hydration has bytes but no prior extract.
+      if (!text && att.dataBase64 && (att.kind === "pdf" || !att.kind)) {
+        try {
+          const { parseAttachment } = await import("../../services/fileParseService.js");
+          const parsed = await parseAttachment(att);
+          text = parsed.text || "";
+        } catch {
+          text = "";
+        }
+      }
+
+      if (text) {
+        pieces.push(`--- File: ${att.name} ---\n${text}`);
       } else if (att.kind === "image") {
-        const ocr = att.extractedText
-          ? `\n${att.extractedText}`
-          : "\n[No OCR text stored — use vision_analyze for visual understanding]";
-        pieces.push(`--- File: ${att.name} (image) ---${ocr}`);
+        pieces.push(
+          `--- File: ${att.name} (image) ---\n[No OCR text stored — use vision_analyze for visual understanding]`
+        );
       } else if (att.kind === "pdf") {
         pieces.push(
-          `--- File: ${att.name} ---\n[PDF is available as multimodal context in the main conversation]`
+          `--- File: ${att.name} ---\n[PDF text could not be extracted. Ask the user to re-upload if the file is scanned or encrypted.]`
         );
       }
     }
@@ -126,13 +146,31 @@ export const fileReaderTool = {
       };
     }
 
-    const content = pieces.join("\n\n");
-    const max = 60_000;
+    let content = pieces.join("\n\n");
+    const offset =
+      typeof args.offset === "number" && Number.isFinite(args.offset)
+        ? Math.max(0, Math.floor(args.offset))
+        : 0;
+    const max =
+      typeof args.limit === "number" && Number.isFinite(args.limit)
+        ? Math.min(120_000, Math.max(1_000, Math.floor(args.limit)))
+        : 60_000;
+
+    if (offset > 0 || content.length > max) {
+      const slice = content.slice(offset, offset + max);
+      const hasMore = offset + max < content.length;
+      content =
+        slice +
+        (hasMore
+          ? `\n\n[Truncated at offset ${offset + slice.length}/${content.length}. Call file_reader again with a higher offset to continue.]`
+          : "");
+    }
+
     return {
       ok: true,
       instruction: args.instruction || null,
       available: catalog,
-      content: content.length > max ? `${content.slice(0, max)}\n\n[Truncated]` : content,
+      content,
     };
   },
 };

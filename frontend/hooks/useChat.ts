@@ -55,6 +55,7 @@ interface StoredAttachment {
 interface StoredMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  wasInterrupted?: boolean;
   attachments?: StoredAttachment[];
   meta?: Message['meta'] & {
     inputTokens?: number;
@@ -163,7 +164,57 @@ export function useChat(options?: UseChatOptions) {
     });
   }, []);
 
+  /** Coalesce SSE text deltas to ~1 frame (rAF) / 32ms to cut main-thread churn. */
+  const pendingDeltaRef = useRef('');
+  const deltaFlushRafRef = useRef<number | null>(null);
+  const deltaFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushPendingDelta = useCallback(() => {
+    if (deltaFlushRafRef.current != null) {
+      cancelAnimationFrame(deltaFlushRafRef.current);
+      deltaFlushRafRef.current = null;
+    }
+    if (deltaFlushTimerRef.current != null) {
+      clearTimeout(deltaFlushTimerRef.current);
+      deltaFlushTimerRef.current = null;
+    }
+    const pending = pendingDeltaRef.current;
+    if (!pending) return;
+    pendingDeltaRef.current = '';
+    appendToLastMessage(pending);
+  }, [appendToLastMessage]);
+
+  const enqueueDelta = useCallback(
+    (chunk: string) => {
+      if (!chunk) return;
+      pendingDeltaRef.current += chunk;
+      if (deltaFlushRafRef.current != null || deltaFlushTimerRef.current != null) return;
+      if (typeof requestAnimationFrame === 'function') {
+        deltaFlushRafRef.current = requestAnimationFrame(() => {
+          deltaFlushRafRef.current = null;
+          flushPendingDelta();
+        });
+      } else {
+        deltaFlushTimerRef.current = setTimeout(() => {
+          deltaFlushTimerRef.current = null;
+          flushPendingDelta();
+        }, 32);
+      }
+    },
+    [flushPendingDelta]
+  );
+
   const replaceLastMessageContent = useCallback((content: string) => {
+    // Replace must win over any coalesced appends.
+    pendingDeltaRef.current = '';
+    if (deltaFlushRafRef.current != null) {
+      cancelAnimationFrame(deltaFlushRafRef.current);
+      deltaFlushRafRef.current = null;
+    }
+    if (deltaFlushTimerRef.current != null) {
+      clearTimeout(deltaFlushTimerRef.current);
+      deltaFlushTimerRef.current = null;
+    }
     setMessages((prev) => {
       const next = [...prev];
       const last = next[next.length - 1];
@@ -178,49 +229,89 @@ export function useChat(options?: UseChatOptions) {
     });
   }, []);
 
-  const finalizeLastMessage = useCallback(() => {
+  const finalizeLastMessage = useCallback((opts?: { interrupted?: boolean }) => {
+    flushPendingDelta();
     setMessages((prev) => {
       const next = [...prev];
       const last = next[next.length - 1];
-      if (last?.role === 'assistant') {
-        next[next.length - 1] = { ...last, isStreaming: false };
+      if (last?.role !== 'assistant') return prev;
+      // Stop before the first token: drop the empty placeholder bubble.
+      if (opts?.interrupted && !last.content?.trim()) {
+        next.pop();
+        return next;
       }
+      next[next.length - 1] = {
+        ...last,
+        isStreaming: false,
+        wasInterrupted: opts?.interrupted ? !!last.content?.trim() : false,
+      };
       return next;
     });
-  }, []);
+  }, [flushPendingDelta]);
 
   const handleSendMessage = useCallback(
     async (
       content: string,
       attachments?: MessageAttachment[],
-      options?: { voiceMode?: boolean }
+      options?: {
+        voiceMode?: boolean;
+        historyOverride?: Message[];
+        /** Resume into an existing interrupted assistant message. */
+        continueFromId?: string;
+      }
     ) => {
+      const historyOverride = options?.historyOverride;
+      const continueFromId = options?.continueFromId;
       const hasAttachments = !!attachments?.length;
-      if (!content.trim() && !hasAttachments) return;
+      if (!historyOverride && !continueFromId && !content.trim() && !hasAttachments) return;
 
       // Captured before `messages` grows below — the one reliable signal for
       // "this is the first message of this conversation", regardless of
       // whether the chat was pre-created via "New Chat" (chatIdRef already
       // set) or is being created inline by the backend on first send.
-      const isFirstMessage = messages.length === 0;
+      const isFirstMessage =
+        !historyOverride && !continueFromId && messages.length === 0;
 
-      const newUserMessage: Message = {
-        id: Date.now().toString(),
-        role: 'user',
-        content: content.trim(),
-        attachments,
-      };
+      const CONTINUE_PROMPT =
+        'Continue your previous response exactly from where you left off. Do not repeat what was already written — only continue seamlessly.';
 
-      const updatedMessagesList = [...messages, newUserMessage];
-      const streamingId = (Date.now() + 1).toString();
-      const placeholderMessage: Message = {
-        id: streamingId,
-        role: 'assistant',
-        content: '',
-        isStreaming: true,
-      };
+      let updatedMessagesList: Message[];
+      let continuePartial = '';
 
-      setMessages([...updatedMessagesList, placeholderMessage]);
+      if (continueFromId) {
+        const idx = messages.findIndex((m) => m.id === continueFromId);
+        if (idx < 0) return;
+        const target = messages[idx];
+        if (target.role !== 'assistant' || !target.content?.trim()) return;
+        continuePartial = target.content;
+        updatedMessagesList = messages.slice(0, idx + 1).map((m, i) =>
+          i === idx
+            ? { ...m, isStreaming: true, wasInterrupted: false }
+            : m
+        );
+        setMessages(updatedMessagesList);
+      } else if (historyOverride) {
+        updatedMessagesList = historyOverride;
+      } else {
+        const newUserMessage: Message = {
+          id: Date.now().toString(),
+          role: 'user',
+          content: content.trim(),
+          attachments,
+        };
+        updatedMessagesList = [...messages, newUserMessage];
+      }
+
+      const streamingId = continueFromId || (Date.now() + 1).toString();
+      if (!continueFromId) {
+        const placeholderMessage: Message = {
+          id: streamingId,
+          role: 'assistant',
+          content: '',
+          isStreaming: true,
+        };
+        setMessages([...updatedMessagesList, placeholderMessage]);
+      }
       setIsLoading(true);
 
       const myGeneration = ++generationRef.current;
@@ -229,16 +320,35 @@ export function useChat(options?: UseChatOptions) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
+      let aborted = false;
+      let skipFinalize = false;
+
       try {
+        const wireMessages = continueFromId
+          ? [
+              ...updatedMessagesList.map((m) => ({
+                role: m.role,
+                content: m.content,
+                attachments: toWireAttachments(m.attachments),
+              })),
+              { role: 'user' as const, content: CONTINUE_PROMPT },
+            ]
+          : updatedMessagesList.map((m) => ({
+              role: m.role,
+              content: m.content,
+              attachments: toWireAttachments(m.attachments),
+            }));
+
         const payload = {
-          messages: updatedMessagesList.map((m) => ({
-            role: m.role,
-            content: m.content,
-            attachments: toWireAttachments(m.attachments),
-          })),
+          messages: wireMessages,
           // Explicit multi-file ids for the latest turn (backend also reads
           // attachment.fileId). Lets tools/hydration resolve uploads reliably.
-          fileIds: attachments
+          fileIds: (continueFromId
+            ? undefined
+            : historyOverride
+              ? updatedMessagesList[updatedMessagesList.length - 1]?.attachments
+              : attachments
+          )
             ?.map((a) => a.fileId)
             .filter((id): id is string => typeof id === 'string' && id.length > 0),
           chatId: chatIdRef.current || undefined,
@@ -246,6 +356,7 @@ export function useChat(options?: UseChatOptions) {
           preferWebSearch: preferWebSearchRef?.current || undefined,
           model: selectedModelRef?.current || undefined,
           voiceMode: options?.voiceMode || undefined,
+          continueGenerating: continueFromId ? true : undefined,
         };
 
         const response = await apiFetch('/chat', {
@@ -325,22 +436,25 @@ export function useChat(options?: UseChatOptions) {
             } else if (event.delta != null && event.delta !== '') {
               if (event.replace) {
                 // Image-edit success caption replaces any temporary tool status.
+                // Continue identity scrub may also replace with merged full text.
                 replaceLastMessageContent(event.delta);
               } else {
-                appendToLastMessage(event.delta);
+                enqueueDelta(event.delta);
               }
             } else if (event.tool?.status === 'start' && event.tool.displayName) {
               // Temporary progress only — replace:true deltas overwrite this.
+              // Skip while continuing — keep the partial reply visible.
+              if (continueFromId) continue;
               setMessages((prev) => {
                 const next = [...prev];
                 const last = next[next.length - 1];
                 if (last?.role !== 'assistant') return prev;
                 if (last.content?.trim()) return prev;
                 const label = String(event.tool?.displayName || '').trim();
-                const content = /\.\.\.$/.test(label) ? label : `${label}...`;
+                const toolContent = /\.\.\.$/.test(label) ? label : `${label}...`;
                 next[next.length - 1] = {
                   ...last,
-                  content,
+                  content: toolContent,
                   isStreaming: true,
                 };
                 return next;
@@ -392,7 +506,11 @@ export function useChat(options?: UseChatOptions) {
                 // Attachment-only sends can have empty text — fall back to
                 // the first attachment's name so title generation still has
                 // something meaningful to work with.
-                const titleSource = content.trim() || attachments?.[0]?.name || '';
+                const titleSource =
+                  content.trim() ||
+                  attachments?.[0]?.name ||
+                  updatedMessagesList[updatedMessagesList.length - 1]?.content ||
+                  '';
                 onFirstMessagePersisted?.(event.chatId, titleSource);
               }
             }
@@ -402,9 +520,11 @@ export function useChat(options?: UseChatOptions) {
         if ((error as Error).name === 'AbortError') {
           // User pressed Stop, or navigated to a different chat — keep
           // whatever streamed so far on the conversation it belongs to.
+          aborted = true;
         } else if (error instanceof GateDenialError) {
           if (isCurrentGeneration()) {
             // Drop the empty assistant placeholder — banner/toast handles UX.
+            // On continue, restore the partial and keep Continue available.
             setMessages((prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
@@ -412,9 +532,19 @@ export function useChat(options?: UseChatOptions) {
                 next.pop();
                 return next;
               }
+              if (continueFromId && last?.role === 'assistant') {
+                next[next.length - 1] = {
+                  ...last,
+                  content: continuePartial || last.content,
+                  isStreaming: false,
+                  wasInterrupted: true,
+                };
+                return next;
+              }
               return prev;
             });
             onGateDenial?.(error.denial);
+            skipFinalize = true;
           }
         } else if (isCurrentGeneration()) {
           console.error('Message error:', error);
@@ -425,7 +555,9 @@ export function useChat(options?: UseChatOptions) {
       } finally {
         if (isCurrentGeneration()) {
           setIsLoading(false);
-          finalizeLastMessage();
+          if (!skipFinalize) {
+            finalizeLastMessage({ interrupted: aborted });
+          }
           abortControllerRef.current = null;
         }
       }
@@ -437,10 +569,39 @@ export function useChat(options?: UseChatOptions) {
       selectedModelRef,
       appendToLastMessage,
       replaceLastMessageContent,
+      enqueueDelta,
       finalizeLastMessage,
       onFirstMessagePersisted,
       onGateDenial,
     ]
+  );
+
+  const regenerateMessage = useCallback(
+    async (assistantMessageId: string) => {
+      if (isLoading) return;
+      const idx = messages.findIndex((m) => m.id === assistantMessageId);
+      if (idx < 0) return;
+      // Only the latest assistant turn — regenerating an earlier turn would
+      // persist a truncated history and permanently drop later messages.
+      for (let i = messages.length - 1; i > idx; i -= 1) {
+        if (messages[i].role === 'assistant') return;
+      }
+      let userIdx = idx - 1;
+      while (userIdx >= 0 && messages[userIdx].role !== 'user') userIdx -= 1;
+      if (userIdx < 0) return;
+
+      const history = messages.slice(0, userIdx + 1);
+      await handleSendMessage('', undefined, { historyOverride: history });
+    },
+    [messages, isLoading, handleSendMessage]
+  );
+
+  const continueGenerating = useCallback(
+    async (assistantMessageId: string) => {
+      if (isLoading) return;
+      await handleSendMessage('', undefined, { continueFromId: assistantMessageId });
+    },
+    [isLoading, handleSendMessage]
   );
 
   const stopGenerating = useCallback(() => {
@@ -484,6 +645,7 @@ export function useChat(options?: UseChatOptions) {
           id: `${id}-${index}`,
           role: m.role,
           content: m.content,
+          wasInterrupted: m.role === 'assistant' && !!m.wasInterrupted,
           attachments: m.attachments?.length
             ? m.attachments.map((a, attIndex) => {
                 const fileId = a.fileId || a.id;
@@ -539,8 +701,11 @@ export function useChat(options?: UseChatOptions) {
     isLoading,
     isChatLoading,
     handleSendMessage,
+    regenerateMessage,
+    continueGenerating,
     stopGenerating,
     appendToLastMessage,
+    replaceLastMessageContent,
     finalizeLastMessage,
     clearMessages,
     setMessages,

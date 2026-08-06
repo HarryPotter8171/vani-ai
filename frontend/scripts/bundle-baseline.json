@@ -1,0 +1,63 @@
+{
+  "capturedAt": "2026-08-03T14:37:55.978Z",
+  "route": "/",
+  "firstLoadUncompressedJsBytes": 2106186,
+  "firstLoadUncompressedJsMB": 2.009,
+  "firstLoadOnDiskBytes": 2106186,
+  "firstLoadOnDiskMB": 2.009,
+  "chunkCount": 13,
+  "topChunks": [
+    {
+      "file": "static/chunks/38nvxy0nx0ko1.js",
+      "kb": 1164.6
+    },
+    {
+      "file": "static/chunks/31sgl9vqb6sel.js",
+      "kb": 222.2
+    },
+    {
+      "file": "static/chunks/14zohrwueosax.js",
+      "kb": 159.7
+    },
+    {
+      "file": "static/chunks/0-xxijx2xqcjf.js",
+      "kb": 143.9
+    },
+    {
+      "file": "static/chunks/2-0y5h9d9rdf8.js",
+      "kb": 134.2
+    },
+    {
+      "file": "static/chunks/1loyw405s69ks.js",
+      "kb": 53.4
+    },
+    {
+      "file": "static/chunks/28ps5tqaye69h.js",
+      "kb": 49.9
+    },
+    {
+      "file": "static/chunks/0paxexg6-m0de.js",
+      "kb": 42.9
+    },
+    {
+      "file": "static/chunks/2sswr0rtt1h38.js",
+      "kb": 29.1
+    },
+    {
+      "file": "static/chunks/0kxr7ak5jhw_t.js",
+      "kb": 28.5
+    },
+    {
+      "file": "static/chunks/2oimqf_hzmft_.js",
+      "kb": 10.8
+    },
+    {
+      "file": "static/chunks/turbopack-1kbjirg_cptii.js",
+      "kb": 10.4
+    },
+    {
+      "file": "static/chunks/2nv756hmqvjcj.js",
+      "kb": 7.2
+    }
+  ]
+}

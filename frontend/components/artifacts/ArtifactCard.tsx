@@ -43,8 +43,8 @@ export default function ArtifactCard({ artifact, isActive, onOpen }: ArtifactCar
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13.5px] font-medium text-foreground">{artifact.title}</div>
-        <div className="text-[11.5px] text-muted-foreground">
+        <div className="truncate text-sm font-medium text-foreground">{artifact.title}</div>
+        <div className="text-micro text-muted-foreground">
           {info.label}
           {artifact.isStreaming ? ' · Generating…' : ` · ${lineCount} lines`}
         </div>
