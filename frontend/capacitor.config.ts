@@ -11,11 +11,11 @@ function resolveLiveServerUrl(): string {
     '';
 
   if (candidate && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/i.test(candidate)) {
-    return candidate.replace(/\/$/, '');
+    const base = candidate.replace(/\/$/, '');
+    return `${base}${base.includes('?') ? '&' : '?'}v=3`;
   }
 
-  // Replace with your actual Vercel deployment URL before building the APK.
-  return 'https://YOUR-APP.vercel.app';
+  return 'https://vani-ai-ten.vercel.app/?v=3';
 }
 
 const config: CapacitorConfig = {
@@ -23,7 +23,7 @@ const config: CapacitorConfig = {
   appName: 'VANI AI',
   webDir: 'out', // fallback if server.url is unreachable
   server: {
-    url: resolveLiveServerUrl(),
+    url: 'https://vani-ai-ten.vercel.app/?v=3',
     cleartext: true,
     allowNavigation: ['accounts.google.com', '*.google.com'],
   },

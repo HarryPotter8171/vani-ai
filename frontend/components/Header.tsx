@@ -35,7 +35,7 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
         aria-label="Toggle sidebar"
       >
         <Menu size={18} strokeWidth={1.75} className="md:h-4 md:w-4" />
-      </button>
+      </button><span className="pointer-events-auto ml-2 bg-red-500 text-white px-2 py-1 text-xs rounded z-50">v2.0</span>
     </div>
   );
 }
