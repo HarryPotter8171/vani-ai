@@ -8,6 +8,7 @@
  */
 
 import { GoogleGenAI } from "@google/genai";
+import { buildGoogleGenAIOptions } from "../config/gcpCredentials.js";
 import { buildMockGeminiClient } from "./testDoubles/mockGeminiClient.js";
 
 /** Live API version — do not reuse the shared v1 chat client. */
@@ -24,12 +25,9 @@ export function getGeminiLiveClient() {
     liveAi =
       process.env.VANI_E2E_MODE === "true"
         ? buildMockGeminiClient()
-        : new GoogleGenAI({
-            vertexai: true,
-            project: process.env.GOOGLE_CLOUD_PROJECT,
-            location: process.env.GOOGLE_CLOUD_LOCATION,
-            apiVersion: LIVE_API_VERSION,
-          });
+        : new GoogleGenAI(
+            buildGoogleGenAIOptions({ apiVersion: LIVE_API_VERSION })
+          );
   }
   return liveAi;
 }

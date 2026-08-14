@@ -97,7 +97,7 @@ const RULES = [
         return false;
       }
     },
-    hint: "GOOGLE_APPLICATION_CREDENTIALS is set but not a readable file. Point it at a valid service-account JSON, set GOOGLE_APPLICATION_CREDENTIALS_JSON (Railway/PaaS) so boot materialises a temp file, or unset both to use ambient/workload-identity credentials.",
+    hint: "GOOGLE_APPLICATION_CREDENTIALS is set but not a readable file. Point it at a valid service-account JSON, set GOOGLE_CREDENTIALS_JSON (Vercel/PaaS inline auth), set GOOGLE_APPLICATION_CREDENTIALS_JSON (temp-file materialisation), or unset all to use ambient/workload-identity credentials.",
   },
   {
     name: "TAVILY_API_KEY",

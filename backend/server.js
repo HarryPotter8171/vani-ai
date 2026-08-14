@@ -34,8 +34,9 @@ import { initBilling } from "./billing/init.js";
 import { attachVoiceWebSocket } from "./services/voice/index.js";
 
 // Railway / PaaS: inline service-account JSON → temp file + GOOGLE_APPLICATION_CREDENTIALS
+// Vercel: GOOGLE_CREDENTIALS_JSON → inline googleAuthOptions.credentials (no temp file)
 // before validateEnvironment checks that the credentials path is readable.
-// Local: leave GOOGLE_APPLICATION_CREDENTIALS_JSON unset; file-path credentials stay as-is.
+// Local: leave both JSON env vars unset; file-path credentials stay as-is.
 try {
   materializeGcpCredentialsFromEnv();
 } catch (err) {

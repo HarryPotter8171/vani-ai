@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { buildGoogleGenAIOptions } from "../config/gcpCredentials.js";
 import { buildMockGeminiClient } from "./testDoubles/mockGeminiClient.js";
 
 // Lazy singleton shared by chat + tools. Construction is deferred until first
@@ -13,12 +14,7 @@ export function getGeminiClient() {
     ai =
       process.env.VANI_E2E_MODE === "true"
         ? buildMockGeminiClient()
-        : new GoogleGenAI({
-            vertexai: true,
-            project: process.env.GOOGLE_CLOUD_PROJECT,
-            location: process.env.GOOGLE_CLOUD_LOCATION,
-            apiVersion: "v1",
-          });
+        : new GoogleGenAI(buildGoogleGenAIOptions({ apiVersion: "v1" }));
   }
   return ai;
 }

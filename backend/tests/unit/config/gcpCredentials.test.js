@@ -2,11 +2,18 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { materializeGcpCredentialsFromEnv } from "../../../config/gcpCredentials.js";
+import {
+  buildGoogleGenAIOptions,
+  getGoogleAuthOptions,
+  materializeGcpCredentialsFromEnv,
+} from "../../../config/gcpCredentials.js";
 
 const ENV_KEYS = [
+  "GOOGLE_CREDENTIALS_JSON",
   "GOOGLE_APPLICATION_CREDENTIALS_JSON",
   "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
 ];
 
 const DEST = path.join(os.tmpdir(), "vani-gcp-service-account.json");
@@ -48,7 +55,7 @@ describe("config/gcpCredentials", () => {
     }
   });
 
-  it("is a no-op when GOOGLE_APPLICATION_CREDENTIALS_JSON is unset", () => {
+  it("is a no-op when inline JSON env vars are unset", () => {
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "./keys/service-account.json";
     const result = materializeGcpCredentialsFromEnv();
     expect(result).toEqual({ applied: false });
@@ -58,13 +65,52 @@ describe("config/gcpCredentials", () => {
     expect(fs.existsSync(DEST)).toBe(false);
   });
 
-  it("writes JSON to tmp and sets GOOGLE_APPLICATION_CREDENTIALS", () => {
+  it("validates GOOGLE_CREDENTIALS_JSON without writing a temp file", () => {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = "./keys/missing.json";
+    process.env.GOOGLE_CREDENTIALS_JSON = JSON.stringify(VALID_SA);
+
+    const result = materializeGcpCredentialsFromEnv();
+    expect(result).toEqual({ applied: false, mode: "inline" });
+    expect(process.env.GOOGLE_APPLICATION_CREDENTIALS).toBe(
+      "./keys/missing.json"
+    );
+    expect(fs.existsSync(DEST)).toBe(false);
+  });
+
+  it("buildGoogleGenAIOptions passes inline credentials to googleAuthOptions", () => {
+    process.env.GOOGLE_CLOUD_PROJECT = "demo-proj";
+    process.env.GOOGLE_CLOUD_LOCATION = "us-central1";
+    process.env.GOOGLE_CREDENTIALS_JSON = JSON.stringify(VALID_SA);
+
+    const options = buildGoogleGenAIOptions({ apiVersion: "v1" });
+    expect(options.vertexai).toBe(true);
+    expect(options.project).toBe("demo-proj");
+    expect(options.location).toBe("us-central1");
+    expect(options.apiVersion).toBe("v1");
+    expect(options.googleAuthOptions?.credentials?.client_email).toBe(
+      VALID_SA.client_email
+    );
+    expect(getGoogleAuthOptions()?.credentials?.private_key).toBe(
+      VALID_SA.private_key
+    );
+  });
+
+  it("buildGoogleGenAIOptions omits googleAuthOptions when JSON env is unset", () => {
+    process.env.GOOGLE_CLOUD_PROJECT = "demo-proj";
+    process.env.GOOGLE_CLOUD_LOCATION = "us-central1";
+
+    const options = buildGoogleGenAIOptions({ apiVersion: "v1beta1" });
+    expect(options.googleAuthOptions).toBeUndefined();
+  });
+
+  it("writes GOOGLE_APPLICATION_CREDENTIALS_JSON to tmp and sets GOOGLE_APPLICATION_CREDENTIALS", () => {
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "./keys/missing.json";
     process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = JSON.stringify(VALID_SA);
 
     const result = materializeGcpCredentialsFromEnv();
     expect(result.applied).toBe(true);
     expect(result.path).toBe(DEST);
+    expect(result.mode).toBe("file");
     expect(process.env.GOOGLE_APPLICATION_CREDENTIALS).toBe(DEST);
     expect(fs.existsSync(DEST)).toBe(true);
 
@@ -73,8 +119,23 @@ describe("config/gcpCredentials", () => {
     expect(written.private_key).toBe(VALID_SA.private_key);
   });
 
-  it("rejects invalid JSON", () => {
-    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = "{not-json";
+  it("prefers GOOGLE_CREDENTIALS_JSON over GOOGLE_APPLICATION_CREDENTIALS_JSON", () => {
+    process.env.GOOGLE_CREDENTIALS_JSON = JSON.stringify(VALID_SA);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON = JSON.stringify({
+      ...VALID_SA,
+      client_email: "other@demo.iam.gserviceaccount.com",
+    });
+
+    const result = materializeGcpCredentialsFromEnv();
+    expect(result.mode).toBe("inline");
+    expect(fs.existsSync(DEST)).toBe(false);
+    expect(getGoogleAuthOptions()?.credentials?.client_email).toBe(
+      VALID_SA.client_email
+    );
+  });
+
+  it("rejects invalid GOOGLE_CREDENTIALS_JSON", () => {
+    process.env.GOOGLE_CREDENTIALS_JSON = "{not-json";
     expect(() => materializeGcpCredentialsFromEnv()).toThrow(/not valid JSON/);
   });
 
