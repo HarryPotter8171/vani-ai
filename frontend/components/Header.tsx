@@ -15,7 +15,7 @@ export interface HeaderProps {
  */
 export default function Header({ onToggleSidebar }: HeaderProps) {
   return (
-    <div className="pointer-events-none absolute left-4 top-4 z-30 md:left-3 md:top-3">
+    <div className="pointer-events-none fixed left-4 top-12 z-30 md:absolute md:left-3 md:top-3">
       <button
         type="button"
         onClick={onToggleSidebar}

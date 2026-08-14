@@ -1932,7 +1932,7 @@ export default function ChatPage() {
         </div>
       </div>
 
-    <div className="relative z-10 flex h-full w-full min-w-0 flex-col md:flex-row"
+    <div className="relative z-10 flex h-full w-full min-w-0 flex-col pt-2 md:flex-row md:pt-0"
       onDragEnter={(e) => {
         e.preventDefault();
         pageDragDepthRef.current += 1;
@@ -2069,8 +2069,8 @@ export default function ChatPage() {
             <div
               className={
                 isEmptyHome
-                  ? 'vani-chat-column flex w-full min-w-0 flex-col px-4 py-10 scroll-mt-0 md:px-8 max-md:pb-[calc(8rem+env(safe-area-inset-bottom,0px))] max-md:pt-[max(4.5rem,calc(env(safe-area-inset-top,0px)+3.5rem))]'
-                  : 'vani-chat-column flex min-w-0 flex-col px-4 pt-6 scroll-mt-0 md:px-8 md:pt-8 max-md:pt-[max(4rem,calc(env(safe-area-inset-top,0px)+3rem))]'
+                  ? 'vani-chat-column flex w-full min-w-0 flex-col px-4 py-10 scroll-mt-0 md:px-8 max-md:pb-32 max-md:pt-20'
+                  : 'vani-chat-column flex min-w-0 flex-col px-4 pt-6 scroll-mt-0 md:px-8 md:pt-8 max-md:pt-20'
               }
               style={{ paddingBottom: scrollBottomInset }}
             >

@@ -724,7 +724,7 @@ export default function CanvasPanel({
       {!isDesktop ? (
         <div
           data-canvas-drag-handle
-          className="flex items-center gap-0.5 border-b border-black/[0.05] px-1.5 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] dark:border-white/[0.06]"
+          className="flex items-center gap-0.5 border-b border-black/[0.05] px-1.5 pb-2 pt-12 dark:border-white/[0.06] md:pt-2"
         >
           <IconButton
             onClick={requestLeave}

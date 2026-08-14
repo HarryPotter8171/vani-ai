@@ -317,17 +317,17 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 // absolute/inline inside h-screen was clipped by overflow:hidden.
                 'max-md:pointer-events-none max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[45]',
                 'max-md:mx-0 max-md:mt-0 max-md:flex max-md:w-full max-md:max-w-none max-md:justify-center',
-                'max-md:px-4 max-md:pb-4 max-md:mb-[env(safe-area-inset-bottom,0px)]',
+                'max-md:px-4 max-md:pb-6 max-md:mb-2',
                 'max-md:transition-[bottom] max-md:duration-150 max-md:ease-out'
               )
             : cn(
                 // Desktop conversation: absolute within the chat column.
                 'pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center',
-                'pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-[calc(1.75rem+env(safe-area-inset-bottom,0px))]',
+                'pb-6 md:pb-7',
                 // Mobile: fixed to the visual viewport so 100vh chrome can't hide it.
                 'max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[45]',
                 'max-md:w-full max-md:max-w-none',
-                'max-md:px-4 max-md:pb-4 max-md:mb-[env(safe-area-inset-bottom,0px)]',
+                'max-md:px-4 max-md:pb-6 max-md:mb-2',
                 'max-md:transition-[bottom] max-md:duration-150 max-md:ease-out'
               )
         )}
@@ -341,7 +341,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             'relative w-full',
             isInline
               ? 'pointer-events-auto max-w-none max-md:w-full'
-              : 'pointer-events-auto vani-chat-column px-4 md:px-8'
+              : 'pointer-events-auto vani-chat-column'
           )}
         >
           {!isInline ? dock : null}

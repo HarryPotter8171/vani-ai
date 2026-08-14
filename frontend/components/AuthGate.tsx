@@ -70,7 +70,7 @@ function BackendReconnectBanner({
   return (
     <div
       role="status"
-      className="fixed inset-x-0 top-0 z-[100] flex items-center justify-center gap-3 border-b border-border bg-surface-glass px-4 py-2.5 text-sm text-foreground backdrop-blur-xl pt-[max(0.5rem,env(safe-area-inset-top,0px))]"
+      className="fixed inset-x-0 top-0 z-[100] flex items-center justify-center gap-3 border-b border-border bg-surface-glass px-4 py-2.5 pt-12 text-sm text-foreground backdrop-blur-xl md:pt-2.5"
     >
       <span className="text-text-secondary">
         Having trouble connecting. We&apos;ll keep trying.

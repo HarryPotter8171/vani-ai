@@ -51,7 +51,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body
-        className={`${inter.variable} box-border flex h-dvh flex-col overflow-hidden font-sans antialiased pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]`}
+        className={`${inter.variable} box-border flex h-dvh flex-col overflow-hidden font-sans antialiased pt-12 pb-8 md:pt-0 md:pb-0`}
       >
         <a
           href="#main-content"

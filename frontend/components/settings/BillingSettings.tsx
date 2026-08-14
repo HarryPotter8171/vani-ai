@@ -316,10 +316,10 @@ function QuotaRow({ row, mobileCard = false }: { row: QuotaRemaining; mobileCard
       className={cn(
         'space-y-1.5',
         mobileCard &&
-          'rounded-xl bg-surface-secondary/50 p-4 md:bg-transparent md:p-0'
+          'rounded-xl bg-surface-secondary/80 p-4 md:rounded-none md:bg-transparent md:p-0'
       )}
     >
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-2">
+      <div className="flex flex-col gap-1 md:flex-row md:items-baseline md:justify-between md:gap-2">
         <span className="break-words text-sm font-medium text-foreground">
           {METRIC_LABELS[row.metric]}
         </span>
@@ -592,8 +592,8 @@ export default function BillingSettings({
             className={cn(
               'relative flex w-full flex-col overflow-hidden',
               'h-[100dvh] max-h-[100dvh] rounded-none',
-              'pt-[env(safe-area-inset-top,0px)]',
-              'sm:h-[80vh] sm:w-[90vw] sm:max-w-[740px] sm:rounded-xl sm:pt-0',
+              'pt-12 sm:pt-0',
+              'sm:h-[80vh] sm:w-[90vw] sm:max-w-[740px] sm:rounded-xl',
               'border-0 border-border sm:border',
               'bg-surface text-foreground',
               'shadow-3'
@@ -659,7 +659,7 @@ export default function BillingSettings({
                   </p>
                 </div>
 
-                <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] pt-4 md:px-6 md:py-6">
+                <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 md:p-8">
                   {loading && !overview && needsBillingData ? (
                     <div className="mx-auto flex w-full max-w-[500px] flex-col gap-4 py-2" aria-busy="true" aria-label="Loading billing">
                       <SkeletonCard />
@@ -681,7 +681,7 @@ export default function BillingSettings({
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -4 }}
                         transition={{ duration: 0.18, ease: EASE }}
-                        className="mx-auto flex w-full max-w-[500px] flex-col gap-6"
+                        className="mx-auto flex w-full max-w-[500px] flex-col gap-4"
                       >
                         {section === 'general' && (
                           <>
@@ -994,7 +994,7 @@ export default function BillingSettings({
                             </Card>
 
                             <Card title="Usage this period" description="Monthly limits for your plan">
-                              <div className="flex flex-col gap-3 px-4 py-4 md:grid md:gap-4 md:px-5">
+                              <div className="flex flex-col gap-3 p-4 md:grid md:gap-4 md:px-5 md:py-4">
                                 {overview.remaining
                                   .filter((row) => row.unlimited || row.limit > 0)
                                   .map((row) => (
@@ -1041,10 +1041,23 @@ export default function BillingSettings({
                                   ]}
                                 />
                               </div>
-                              <div className="flex flex-col gap-3 md:grid md:grid-cols-2 md:gap-4">
+                              <div className="flex flex-col gap-3 md:hidden">
                                 {overview.plans.map((plan) => (
                                   <PlanCard
-                                    key={plan.planId}
+                                    key={`m-${plan.planId}`}
+                                    plan={plan}
+                                    current={plan.planId === overview.plan.planId}
+                                    currentRank={overview.plan.rank}
+                                    busy={upgrading}
+                                    interval={billingInterval}
+                                    onSelect={handleSelect}
+                                  />
+                                ))}
+                              </div>
+                              <div className="hidden md:grid md:grid-cols-2 md:gap-4">
+                                {overview.plans.map((plan) => (
+                                  <PlanCard
+                                    key={`d-${plan.planId}`}
                                     plan={plan}
                                     current={plan.planId === overview.plan.planId}
                                     currentRank={overview.plan.rank}

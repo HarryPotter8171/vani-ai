@@ -335,7 +335,7 @@ function MessageComponent({
       >
         {isUser ? (
           <div
-            className="group/user relative flex w-fit max-w-[min(85%,100%)] min-w-0 flex-col items-end gap-2 md:max-w-[70%]"
+            className="group/user relative flex w-fit max-w-[85%] min-w-0 flex-col items-end gap-2 md:max-w-[70%]"
             {...longPressHandlers}
           >
             {imageAttachments.length > 0 && (
@@ -475,7 +475,7 @@ function MessageComponent({
           </div>
         ) : (
           <div
-            className="group/assistant flex w-full min-w-0 max-w-full items-start gap-2.5 overflow-visible max-md:gap-2 md:gap-3"
+            className="group/assistant flex w-full min-w-0 max-w-[85%] items-start gap-2.5 overflow-visible max-md:gap-2 md:max-w-full md:gap-3"
             {...longPressHandlers}
           >
             <div className="max-md:mt-1">

@@ -704,7 +704,7 @@ function Sidebar({
             'shadow-2',
             'md:h-[calc(100vh-32px)]',
             'rounded-none md:rounded-[var(--radius-lg)]',
-            'max-md:pt-[env(safe-area-inset-top,0px)] max-md:pb-[env(safe-area-inset-bottom,0px)]'
+            'max-md:pt-12 max-md:pb-8'
           )}
         >
           {/* Brand + New Chat — stacked, never overlapping */}

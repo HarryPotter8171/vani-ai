@@ -152,7 +152,7 @@ export default function VoiceOverlay({
           />
 
           {/* Top bar */}
-          <div className="relative z-10 flex items-center justify-between px-5 pt-[max(1.25rem,env(safe-area-inset-top))] pb-2 sm:px-8">
+          <div className="relative z-10 flex items-center justify-between px-5 pt-12 pb-2 md:pt-5 sm:px-8">
             <div className="flex items-center gap-2.5">
               <span className="text-body font-semibold tracking-[-0.04em] text-white">
                 VANI

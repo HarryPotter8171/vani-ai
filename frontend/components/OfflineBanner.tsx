@@ -57,7 +57,7 @@ export function OfflineBanner() {
           transition={SPRING.snappy}
           className={cn(
             'fixed inset-x-0 top-0 z-[220] flex justify-center px-3',
-            'pt-[max(0.5rem,env(safe-area-inset-top,0px))]'
+            'pt-12 md:pt-2'
           )}
         >
           <div
@@ -93,7 +93,7 @@ export function OfflineBanner() {
           transition={SPRING.snappy}
           className={cn(
             'fixed inset-x-0 top-0 z-[220] flex justify-center px-3',
-            'pt-[max(0.5rem,env(safe-area-inset-top,0px))]'
+            'pt-12 md:pt-2'
           )}
         >
           <div
