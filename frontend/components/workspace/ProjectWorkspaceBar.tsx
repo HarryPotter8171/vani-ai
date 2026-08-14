@@ -32,16 +32,18 @@ export default function ProjectWorkspaceBar({
   return (
     <div
       className={cn(
-        'mx-3 mb-1 flex items-center justify-between gap-3 rounded-[16px] border border-border',
+        'mx-3 mb-1 flex flex-col gap-2 rounded-[16px] border border-border',
         'bg-surface-glass/80 px-3 py-2 backdrop-blur-[var(--blur-glass)]',
-        'sm:mx-4',
+        'sm:mx-4 sm:flex-row sm:items-center sm:justify-between sm:gap-3',
+        'max-md:ml-[max(0.75rem,env(safe-area-inset-left,0px))]',
+        'max-md:mr-[max(0.75rem,env(safe-area-inset-right,0px))]',
         className
       )}
     >
       <p className="min-w-0 truncate text-sm font-semibold tracking-[-0.016em] text-foreground">
         {project.name}
       </p>
-      <div className="flex shrink-0 gap-1">
+      <div className="flex shrink-0 gap-1 self-start sm:self-auto">
         {PROJECT_WORKSPACE_ITEMS.map(({ id, label }) => {
           const Icon = ICONS[id];
           const isActive = active === id;

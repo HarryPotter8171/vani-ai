@@ -12,6 +12,7 @@ import {
   type PlanChangeResult,
   type PlanId,
 } from '@/lib/billing';
+import { getUserFriendlyError, toUserFacingError } from '@/lib/userFacingError';
 
 export interface UseBillingOptions {
   enabled?: boolean;
@@ -51,7 +52,8 @@ export function useBilling({ enabled = true, onError }: UseBillingOptions = {}) 
         }
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Unable to load billing';
+        const message = toUserFacingError(err, "Couldn't load billing");
+        console.error('[billing]', err);
         setError(message);
         onErrorRef.current?.(message);
       } finally {
@@ -89,7 +91,10 @@ export function useBilling({ enabled = true, onError }: UseBillingOptions = {}) 
         else setReloadToken((t) => t + 1);
         return result;
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Plan change failed';
+        const message = getUserFriendlyError(err, {
+          feature: 'billing',
+          fallback: 'Plan change failed',
+        });
         setError(message);
         onErrorRef.current?.(message);
         return null;
@@ -109,7 +114,8 @@ export function useBilling({ enabled = true, onError }: UseBillingOptions = {}) 
       if (portalUrl) window.location.href = portalUrl;
       return portalUrl;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to open portal';
+      const message = toUserFacingError(err, "Couldn't open the billing portal");
+      console.error('[billing]', err);
       setError(message);
       onErrorRef.current?.(message);
       return null;
@@ -125,7 +131,8 @@ export function useBilling({ enabled = true, onError }: UseBillingOptions = {}) 
       setReloadToken((t) => t + 1);
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to cancel';
+      const message = toUserFacingError(err, "Couldn't cancel subscription");
+      console.error('[billing]', err);
       setError(message);
       onErrorRef.current?.(message);
       return null;
@@ -141,7 +148,8 @@ export function useBilling({ enabled = true, onError }: UseBillingOptions = {}) 
       setReloadToken((t) => t + 1);
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to resume';
+      const message = toUserFacingError(err, "Couldn't resume subscription");
+      console.error('[billing]', err);
       setError(message);
       onErrorRef.current?.(message);
       return null;

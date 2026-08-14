@@ -3,6 +3,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -32,6 +33,13 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     this.props.onError?.(error, info);
+    if (typeof console !== 'undefined') {
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('[ErrorBoundary]', error, info.componentStack);
+      } else {
+        console.error('[ErrorBoundary]', error.name || 'Error');
+      }
+    }
   }
 
   reset = (): void => {
@@ -46,12 +54,24 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
     if (typeof fallback === 'function') return fallback(error, this.reset);
     if (fallback) return fallback;
 
+    const isAuth =
+      error.name === 'AuthRequiredError' ||
+      /auth|sign[\s-]?in|token|unauthorized|jwt|session/i.test(
+        `${error.name} ${error.message}`
+      );
+
     return (
       <div className={cn('flex items-center justify-center p-4', className)}>
         <ErrorState
           compact
-          title={title}
-          message={error.message || 'Please try again in a moment.'}
+          title={isAuth ? 'Unable to sign in' : title}
+          message={
+            isAuth
+              ? 'Please try again.'
+              : getUserFriendlyError(error, {
+                  fallback: 'Please try again in a moment.',
+                })
+          }
           onRetry={this.reset}
         />
       </div>

@@ -1,5 +1,10 @@
 import { getApiBaseUrl } from '@/lib/constants';
+import { isDeveloperMode, logDevError } from '@/lib/userFacingError';
 
+/**
+ * @deprecated Never thrown into React. Kept only so legacy `instanceof` checks
+ * compile; prefer {@link AccessTokenResult} / {@link resolveAccessToken}.
+ */
 export class AuthRequiredError extends Error {
   constructor(message = 'Authentication required') {
     super(message);
@@ -14,13 +19,26 @@ export class BackendUnavailableError extends Error {
   }
 }
 
+export type AuthFailureReason =
+  | 'expired'
+  | 'unauthenticated'
+  | 'signed_out'
+  | 'timeout'
+  | 'unavailable'
+  | 'invalid_token'
+  | 'unknown';
+
+export type AccessTokenResult =
+  | { authenticated: true; token: string }
+  | { authenticated: false; reason: AuthFailureReason };
+
 type TokenCache = {
   token: string;
   expiresAt: number;
 };
 
 let tokenCache: TokenCache | null = null;
-let inflight: Promise<string> | null = null;
+let inflight: Promise<AccessTokenResult> | null = null;
 let syncedForToken: string | null = null;
 /** Bumped on clear so in-flight mints cannot repopulate the cache after logout. */
 let cacheGeneration = 0;
@@ -29,12 +47,36 @@ let backendReachable = true;
 
 const FETCH_TIMEOUT_MS = 8_000;
 
+/** True for intentional cancel / barge-in aborts — not a real network failure. */
+export function isAbortError(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof DOMException !== 'undefined' && err instanceof DOMException) {
+    if (err.name === 'AbortError') return true;
+  }
+  if (err instanceof Error) {
+    if (err.name === 'AbortError') return true;
+    if (/aborted|AbortError/i.test(err.message)) return true;
+  }
+  if (typeof err === 'object' && err !== null && 'name' in err) {
+    if ((err as { name?: unknown }).name === 'AbortError') return true;
+  }
+  return false;
+}
+
 export function isBackendReachable() {
   return backendReachable;
 }
 
 export function setBackendReachable(value: boolean) {
   backendReachable = value;
+}
+
+function authFail(reason: AuthFailureReason): AccessTokenResult {
+  return { authenticated: false, reason };
+}
+
+function authOk(token: string): AccessTokenResult {
+  return { authenticated: true, token };
 }
 
 async function fetchWithTimeout(
@@ -48,7 +90,9 @@ async function fetchWithTimeout(
       : input instanceof URL
         ? input.toString()
         : input.url;
-  console.info('[api] fetch →', finalUrl, init.method || 'GET');
+  if (isDeveloperMode()) {
+    console.info('[api] fetch →', finalUrl, init.method || 'GET');
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -62,13 +106,17 @@ async function fetchWithTimeout(
     }
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (err) {
+    // Caller cancelled via init.signal — rethrow AbortError (not a timeout).
+    if (init.signal?.aborted) {
+      throw isAbortError(err) ? err : new DOMException('Aborted', 'AbortError');
+    }
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw new BackendUnavailableError(
         `Request timed out after ${timeoutMs}ms`
       );
     }
     const message = err instanceof Error ? err.message : 'Failed to fetch';
-    console.error('[api] fetch FAILED →', finalUrl, message);
+    logDevError(err, 'api.fetch');
     throw new BackendUnavailableError(message);
   } finally {
     clearTimeout(timer);
@@ -85,10 +133,10 @@ export function clearTokenCache() {
 
 /** Synchronous peek for URL builders (img src). May be null before first fetch. */
 export function getCachedAccessToken(): string | null {
-  if (tokenCache && tokenCache.expiresAt > Date.now() + 15_000) {
-    return tokenCache.token;
-  }
-  return null;
+  const cached = tokenCache;
+  if (!cached?.token) return null;
+  if (cached.expiresAt <= Date.now() + 15_000) return null;
+  return cached.token;
 }
 
 /** Raw cached token for logout revoke — ignores near-expiry freshness window. */
@@ -96,10 +144,21 @@ export function getAccessTokenForLogout(): string | null {
   return tokenCache?.token ?? null;
 }
 
-async function syncBackendUser(token: string) {
-  if (syncedForToken === token) return;
+type SyncResult =
+  | { ok: true }
+  | { ok: false; reason: AuthFailureReason };
+
+/**
+ * Sync Mongo user for the JWT. Never throws AuthRequiredError —
+ * auth failures return `{ ok: false, reason }`.
+ */
+async function syncBackendUser(token: string): Promise<SyncResult> {
+  if (!token) return { ok: false, reason: 'invalid_token' };
+  if (syncedForToken === token) return { ok: true };
   const apiBase = getApiBaseUrl();
-  console.info('[startup] syncBackendUser →', `${apiBase}/auth/sync`);
+  if (isDeveloperMode()) {
+    console.info('[startup] syncBackendUser →', `${apiBase}/auth/sync`);
+  }
   let res: Response;
   try {
     res = await fetchWithTimeout(`${apiBase}/auth/sync`, {
@@ -110,135 +169,204 @@ async function syncBackendUser(token: string) {
       },
     });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : 'Backend unreachable';
-    throw new BackendUnavailableError(message);
+    logDevError(err, 'auth.sync');
+    backendReachable = false;
+    return { ok: false, reason: 'unavailable' };
   }
   if (res.status === 401) {
-    throw new AuthRequiredError();
+    clearTokenCache();
+    return { ok: false, reason: 'expired' };
+  }
+  // Mongo down / boot race — never treat as auth failure that clears a good JWT.
+  if (res.status === 503) {
+    backendReachable = false;
+    logDevError('auth/sync 503 DATABASE_UNAVAILABLE', 'auth.sync');
+    return { ok: false, reason: 'unavailable' };
   }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new BackendUnavailableError(
-      (body as { error?: string }).error || `Sync failed (${res.status})`
-    );
+    backendReachable = false;
+    logDevError(`Sync failed (${res.status})`, 'auth.sync');
+    return { ok: false, reason: 'unavailable' };
   }
   syncedForToken = token;
   backendReachable = true;
-  console.info('[startup] syncBackendUser ok');
+  if (isDeveloperMode()) {
+    console.info('[startup] syncBackendUser ok');
+  }
+  return { ok: true };
 }
 
 /**
- * Obtain a backend access JWT via the Next.js session bridge, then sync the Mongo user.
- * Sync is best-effort: a down/unreachable Express API must not block the app forever.
+ * Resolve a backend access JWT via the Next.js session bridge.
+ * Never throws AuthRequiredError — always returns a structured result.
+ * Never reads `tokenCache.token` without a null-safe snapshot.
+ */
+export async function resolveAccessToken(options?: {
+  force?: boolean;
+}): Promise<AccessTokenResult> {
+  try {
+    const cached = tokenCache;
+    if (
+      !options?.force &&
+      cached?.token &&
+      cached.expiresAt > Date.now() + 30_000
+    ) {
+      const cachedToken = cached.token;
+      // Mint can succeed while /auth/sync fails (backend briefly down). Without
+      // this retry, the cached JWT is reused forever and protected routes keep
+      // returning USER_NOT_SYNCED until the token nears expiry or the user
+      // clicks Retry.
+      if (syncedForToken !== cachedToken) {
+        const sync = await syncBackendUser(cachedToken);
+        if (!sync.ok && (sync.reason === 'expired' || sync.reason === 'unauthenticated')) {
+          clearTokenCache();
+          return authFail(sync.reason);
+        }
+      }
+      // Re-read after await — clearTokenCache may have run concurrently.
+      const still = tokenCache?.token;
+      if (!still) return authFail('signed_out');
+      return authOk(still);
+    }
+
+    if (!options?.force && inflight) return inflight;
+
+    const generation = cacheGeneration;
+    const previousToken = tokenCache?.token || null;
+    const apiBase = getApiBaseUrl();
+
+    inflight = (async (): Promise<AccessTokenResult> => {
+      if (isDeveloperMode()) {
+        console.info('[startup] getAccessToken mint → /api/auth/backend-token', {
+          apiBase,
+        });
+      }
+
+      let res: Response;
+      try {
+        res = await fetchWithTimeout('/api/auth/backend-token', {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+      } catch (err) {
+        logDevError(err, 'auth.mint');
+        backendReachable = false;
+        return authFail('unavailable');
+      }
+
+      if (res.status === 401) {
+        clearTokenCache();
+        return authFail('unauthenticated');
+      }
+
+      if (res.status === 503) {
+        backendReachable = false;
+        return authFail('unavailable');
+      }
+
+      if (!res.ok) {
+        clearTokenCache();
+        logDevError(`backend-token status ${res.status}`, 'auth.mint');
+        return authFail('unknown');
+      }
+
+      let data: {
+        token?: string;
+        expiresAt?: number;
+        expiresIn?: number;
+      };
+      try {
+        data = (await res.json()) as typeof data;
+      } catch (err) {
+        clearTokenCache();
+        logDevError(err, 'auth.mint');
+        return authFail('invalid_token');
+      }
+
+      const minted = typeof data?.token === 'string' ? data.token : '';
+      if (!minted) {
+        clearTokenCache();
+        return authFail('invalid_token');
+      }
+
+      if (generation !== cacheGeneration) {
+        return authFail('signed_out');
+      }
+
+      const expiresAt =
+        typeof data.expiresAt === 'number'
+          ? data.expiresAt
+          : Date.now() + (data.expiresIn || 3600) * 1000;
+
+      if (previousToken && previousToken !== minted) {
+        void fetchWithTimeout(`${apiBase}/auth/revoke`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            Authorization: `Bearer ${previousToken}`,
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store',
+        }).catch(() => {});
+      }
+
+      tokenCache = { token: minted, expiresAt };
+      if (isDeveloperMode()) {
+        console.info('[startup] backend-token minted');
+      }
+
+      const sync = await syncBackendUser(minted);
+      if (!sync.ok && (sync.reason === 'expired' || sync.reason === 'unauthenticated')) {
+        clearTokenCache();
+        return authFail(sync.reason);
+      }
+      if (!sync.ok) {
+        backendReachable = false;
+        // Token is still usable for some routes; callers can retry sync.
+        if (isDeveloperMode()) {
+          console.warn('[startup] backend sync failed (continuing)', sync.reason);
+        }
+      }
+
+      if (generation !== cacheGeneration) {
+        clearTokenCache();
+        return authFail('signed_out');
+      }
+
+      const confirmed = tokenCache?.token;
+      if (!confirmed) return authFail('signed_out');
+      return authOk(confirmed);
+    })();
+
+    try {
+      return await inflight;
+    } finally {
+      if (inflight && generation === cacheGeneration) {
+        inflight = null;
+      }
+    }
+  } catch (err) {
+    // Absolute safety net — never let auth exceptions escape into React.
+    logDevError(err, 'auth.resolve');
+    clearTokenCache();
+    if (err instanceof BackendUnavailableError) {
+      backendReachable = false;
+      return authFail('unavailable');
+    }
+    return authFail('unknown');
+  }
+}
+
+/**
+ * Obtain a backend access JWT.
+ * Returns `null` when unauthenticated — never throws AuthRequiredError.
  */
 export async function getAccessToken(options?: {
   force?: boolean;
-}): Promise<string> {
-  if (
-    !options?.force &&
-    tokenCache &&
-    tokenCache.expiresAt > Date.now() + 30_000
-  ) {
-    // Mint can succeed while /auth/sync fails (backend briefly down). Without
-    // this retry, the cached JWT is reused forever and protected routes keep
-    // returning USER_NOT_SYNCED until the token nears expiry or the user
-    // clicks Retry.
-    if (syncedForToken !== tokenCache.token) {
-      try {
-        await syncBackendUser(tokenCache.token);
-      } catch (err) {
-        if (err instanceof AuthRequiredError) throw err;
-        backendReachable = false;
-      }
-    }
-    return tokenCache.token;
-  }
-
-  if (!options?.force && inflight) return inflight;
-
-  const generation = cacheGeneration;
-  const previousToken = tokenCache?.token || null;
-  const apiBase = getApiBaseUrl();
-
-  inflight = (async () => {
-    console.info('[startup] getAccessToken mint → /api/auth/backend-token', {
-      apiBase,
-    });
-    const res = await fetchWithTimeout('/api/auth/backend-token', {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-    });
-
-    if (res.status === 401) {
-      clearTokenCache();
-      throw new AuthRequiredError();
-    }
-
-    if (!res.ok) {
-      clearTokenCache();
-      throw new Error('Unable to obtain access token');
-    }
-
-    const data = (await res.json()) as {
-      token?: string;
-      expiresAt?: number;
-      expiresIn?: number;
-    };
-
-    if (!data.token) {
-      clearTokenCache();
-      throw new AuthRequiredError();
-    }
-
-    if (generation !== cacheGeneration) {
-      throw new AuthRequiredError('Signed out');
-    }
-
-    const expiresAt =
-      typeof data.expiresAt === 'number'
-        ? data.expiresAt
-        : Date.now() + (data.expiresIn || 3600) * 1000;
-
-    if (previousToken && previousToken !== data.token) {
-      void fetchWithTimeout(`${apiBase}/auth/revoke`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          Authorization: `Bearer ${previousToken}`,
-          'Content-Type': 'application/json',
-        },
-        cache: 'no-store',
-      }).catch(() => {});
-    }
-
-    tokenCache = { token: data.token, expiresAt };
-    console.info('[startup] backend-token minted');
-
-    try {
-      await syncBackendUser(data.token);
-    } catch (err) {
-      if (err instanceof AuthRequiredError) throw err;
-      backendReachable = false;
-      console.warn('[startup] backend sync failed (continuing)', err);
-    }
-
-    if (generation !== cacheGeneration) {
-      clearTokenCache();
-      throw new AuthRequiredError('Signed out');
-    }
-
-    return data.token;
-  })();
-
-  try {
-    return await inflight;
-  } finally {
-    if (inflight && generation === cacheGeneration) {
-      inflight = null;
-    }
-  }
+}): Promise<string | null> {
+  const result = await resolveAccessToken(options);
+  return result.authenticated ? result.token : null;
 }
 
 export async function authHeaders(
@@ -247,10 +375,8 @@ export async function authHeaders(
 ): Promise<HeadersInit> {
   const token = await getAccessToken();
   const headers = new Headers(extra);
-  headers.set('Authorization', `Bearer ${token}`);
-  if (options?.json !== false && !headers.has('Content-Type')) {
-    // Only set JSON content-type when caller didn't already set it and body isn't FormData.
-    // Callers using FormData should pass json: false.
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
   }
   if (options?.json) {
     headers.set('Content-Type', 'application/json');
@@ -263,9 +389,39 @@ export type ApiFetchInit = RequestInit & {
   json?: boolean;
 };
 
+function unauthenticatedResponse(reason: AuthFailureReason): Response {
+  return new Response(
+    JSON.stringify({
+      authenticated: false,
+      reason,
+      error: 'Authentication required',
+    }),
+    {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    }
+  );
+}
+
+function databaseUnavailableResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      success: false,
+      code: 'DATABASE_UNAVAILABLE',
+      error: 'Database temporarily unavailable',
+    }),
+    {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    }
+  );
+}
+
 /**
  * Authenticated fetch against the Express API (getApiBaseUrl() + path).
  * `path` may be absolute (http...) or relative to the API base (e.g. `/chat/list`).
+ * Auth failures return a 401 Response — they never throw AuthRequiredError.
+ * 503 / timeouts never touch `token.token` on a null cache.
  */
 export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<Response> {
   const apiBase = getApiBaseUrl();
@@ -273,7 +429,9 @@ export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<R
     ? path
     : `${apiBase}${path.startsWith('/') ? path : `/${path}`}`;
 
-  console.info('[api] apiFetch →', url, init.method || 'GET', { apiBase, path });
+  if (isDeveloperMode()) {
+    console.info('[api] apiFetch →', url, init.method || 'GET', { apiBase, path });
+  }
 
   const { json, headers: initHeaders, ...rest } = init;
   const headers = new Headers(initHeaders || {});
@@ -285,29 +443,84 @@ export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<R
   }
 
   const send = async (token: string) => {
+    if (!token) return unauthenticatedResponse('invalid_token');
     headers.set('Authorization', `Bearer ${token}`);
     try {
       return await fetch(url, { ...rest, headers });
     } catch (err) {
+      // Barge-in / Stop / navigation abort — rethrow so callers can exit quietly.
+      // Never wrap as BackendUnavailableError or log as a hard failure.
+      if (isAbortError(err) || rest.signal?.aborted) {
+        if (isAbortError(err)) throw err;
+        throw new DOMException('Aborted', 'AbortError');
+      }
       const message = err instanceof Error ? err.message : 'Failed to fetch';
-      console.error('[api] apiFetch FAILED →', url, message);
+      logDevError(err, 'apiFetch');
       throw new BackendUnavailableError(message);
     }
   };
 
-  let response = await send(await getAccessToken());
+  let tokenResult: AccessTokenResult;
+  try {
+    tokenResult = await resolveAccessToken();
+  } catch (err) {
+    logDevError(err, 'apiFetch.resolve');
+    backendReachable = false;
+    return databaseUnavailableResponse();
+  }
+
+  if (!tokenResult?.authenticated || !tokenResult.token) {
+    if (tokenResult && !tokenResult.authenticated && tokenResult.reason === 'unavailable') {
+      return databaseUnavailableResponse();
+    }
+    return unauthenticatedResponse(
+      tokenResult && !tokenResult.authenticated ? tokenResult.reason : 'unauthenticated'
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await send(tokenResult.token);
+  } catch (err) {
+    if (err instanceof BackendUnavailableError) {
+      backendReachable = false;
+      return databaseUnavailableResponse();
+    }
+    throw err;
+  }
+
+  if (response.status === 503) {
+    backendReachable = false;
+    return response;
+  }
 
   // One remint + retry for expired / revoked / not-yet-synced JWTs while the
   // NextAuth session is still valid. Does not loop — a second 401 stands.
   if (response.status === 401) {
     clearTokenCache();
-    try {
-      const fresh = await getAccessToken({ force: true });
-      response = await send(fresh);
-    } catch {
-      /* return original 401 — session may already be gone */
+    const fresh = await resolveAccessToken({ force: true });
+    if (!fresh.authenticated || !fresh.token) {
+      if (!fresh.authenticated && fresh.reason === 'unavailable') {
+        return databaseUnavailableResponse();
+      }
+      return unauthenticatedResponse(
+        !fresh.authenticated && fresh.reason === 'unknown' ? 'expired' : 
+        !fresh.authenticated ? fresh.reason : 'expired'
+      );
     }
-    if (response.status === 401) clearTokenCache();
+    try {
+      response = await send(fresh.token);
+    } catch (err) {
+      if (err instanceof BackendUnavailableError) {
+        backendReachable = false;
+        return databaseUnavailableResponse();
+      }
+      throw err;
+    }
+    if (response.status === 401) {
+      clearTokenCache();
+      return unauthenticatedResponse('expired');
+    }
   }
 
   return response;
@@ -327,7 +540,9 @@ export async function apiUploadXHR(
     ? path
     : `${apiBase}${path.startsWith('/') ? path : `/${path}`}`;
 
-  console.info('[api] apiUploadXHR →', url, { apiBase, path });
+  if (isDeveloperMode()) {
+    console.info('[api] apiUploadXHR →', url, { apiBase, path });
+  }
 
   const runOnce = (token: string) =>
     new Promise<unknown>((resolve, reject) => {
@@ -396,14 +611,25 @@ export async function apiUploadXHR(
       xhr.send(form);
     });
 
-  const token = await getAccessToken();
+  const tokenResult = await resolveAccessToken();
+  if (!tokenResult.authenticated || !tokenResult.token) {
+    const err = new Error('Authentication required') as Error & { status?: number };
+    err.status = 401;
+    throw err;
+  }
+
   try {
-    return await runOnce(token);
+    return await runOnce(tokenResult.token);
   } catch (err) {
     const status = (err as { status?: number } | null)?.status;
     if (status !== 401) throw err;
     clearTokenCache();
-    const fresh = await getAccessToken({ force: true });
-    return runOnce(fresh);
+    const fresh = await resolveAccessToken({ force: true });
+    if (!fresh.authenticated || !fresh.token) {
+      const authErr = new Error('Authentication required') as Error & { status?: number };
+      authErr.status = 401;
+      throw authErr;
+    }
+    return runOnce(fresh.token);
   }
 }

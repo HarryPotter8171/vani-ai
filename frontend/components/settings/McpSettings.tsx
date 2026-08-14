@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/Toast';
 import { useMcp } from '@/hooks/useMcp';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 import {
   MCP_STATUS_LABELS,
   MCP_TRANSPORT_LABELS,
@@ -273,7 +274,9 @@ function ServerDialog({
         description: values.description.trim() || undefined,
         transport: buildTransport(preset, values) });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save server');
+      setError(
+        getUserFriendlyError(err, { fallback: 'Could not save server' })
+      );
     }
   };
 
@@ -681,7 +684,9 @@ export default function McpSettings({ open, onClose }: McpSettingsProps) {
                               })
                               .catch((err) => {
                                 showToast(
-                                  err instanceof Error ? err.message : 'Update failed',
+                                  getUserFriendlyError(err, {
+                                    fallback: 'Update failed',
+                                  }),
                                   'error'
                                 );
                               });
@@ -719,7 +724,9 @@ export default function McpSettings({ open, onClose }: McpSettingsProps) {
                             })
                             .catch((err) => {
                               showToast(
-                                err instanceof Error ? err.message : 'Test failed',
+                                getUserFriendlyError(err, {
+                                  fallback: 'Test failed',
+                                }),
                                 'error'
                               );
                             });
@@ -748,7 +755,9 @@ export default function McpSettings({ open, onClose }: McpSettingsProps) {
                               showToast('Connected', 'success');
                             }).catch((err) => {
                               showToast(
-                                err instanceof Error ? err.message : 'Connect failed',
+                                getUserFriendlyError(err, {
+                                  fallback: 'Connect failed',
+                                }),
                                 'error'
                               );
                             })

@@ -23,11 +23,16 @@ function getPackageVersion() {
 
 async function checkMongo() {
   const state = mongoose.connection.readyState; // 0=disconnected,1=connected,2=connecting,3=disconnecting
-  if (state !== 1) {
+  if (state !== 1 || !mongoose.connection.db) {
     return { healthy: false, state, detail: "not connected" };
   }
   try {
-    await mongoose.connection.db.admin().ping();
+    // Bound ping so /health never hangs on a wedged driver.
+    const ping = mongoose.connection.db.admin().ping();
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("ping timeout")), 1000)
+    );
+    await Promise.race([ping, timeout]);
     return { healthy: true, state };
   } catch (err) {
     return { healthy: false, state, error: err.message };

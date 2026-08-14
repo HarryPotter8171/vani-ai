@@ -97,7 +97,10 @@ export async function getSignedFileContentUrl(
   fileId: string,
   options?: { download?: boolean }
 ): Promise<string> {
-  await getAccessToken();
+  const tokenResult = await getAccessToken();
+  if (!tokenResult) {
+    return fileContentUrl(fileId, options);
+  }
   const params = new URLSearchParams();
   if (options?.download) params.set('download', '1');
   const qs = params.toString();

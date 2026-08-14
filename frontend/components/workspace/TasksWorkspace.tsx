@@ -121,7 +121,7 @@ export default function TasksWorkspace({
           size="sm"
           icon={ListTodo}
           title="No tasks yet"
-          description="Capture focus items for this workspace."
+          description="Capture to-dos for this workspace, or ask VANI to break a goal into steps."
           className="rounded-[16px] border border-dashed border-border py-7"
           action={
             onAskAi ? (

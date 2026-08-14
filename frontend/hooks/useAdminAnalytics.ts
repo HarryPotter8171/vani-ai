@@ -11,6 +11,7 @@ import {
   type AnalyticsLogEntry,
   type SystemHealth,
 } from '@/lib/analytics';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface UseAdminAnalyticsOptions {
   enabled?: boolean;
@@ -54,8 +55,9 @@ export function useAdminAnalytics({
         setLogs(l);
       } catch (err) {
         if (cancelled) return;
-        const message =
-          err instanceof Error ? err.message : 'Unable to load admin analytics';
+        const message = getUserFriendlyError(err, {
+          fallback: 'Unable to load admin analytics',
+        });
         setError(message);
         onErrorRef.current?.(message);
       } finally {
@@ -72,7 +74,7 @@ export function useAdminAnalytics({
     try {
       await downloadAnalyticsCsv('admin');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'CSV export failed';
+      const message = getUserFriendlyError(err, { fallback: 'CSV export failed' });
       onErrorRef.current?.(message);
     }
   }, []);
@@ -88,7 +90,7 @@ export function useAdminAnalytics({
         `vani-admin-analytics-${stamp}.pdf`
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'PDF export failed';
+      const message = getUserFriendlyError(err, { fallback: 'PDF export failed' });
       onErrorRef.current?.(message);
     }
   }, []);

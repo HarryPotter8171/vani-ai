@@ -66,12 +66,14 @@ import {
 import { KeyboardShortcutsProvider } from '@/components/ui/KeyboardShortcuts';
 import { PageTransition } from '@/components/ui/PageTransition';
 import { useCanvas } from '@/hooks/useCanvas';
+import OpenCanvasConfirmSheet from '@/components/canvas/OpenCanvasConfirmSheet';
 import { useProjects } from '@/hooks/useProjects';
 import { useChatHistory } from '@/hooks/useChatHistory';
 import { useToast } from '@/components/ui/Toast';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { QuotaExceededBanner } from '@/components/billing/QuotaExceededBanner';
-import { formatGateToast, type GateDenial } from '@/lib/billing/gateError';
+import UpgradePlanModal from '@/components/billing/UpgradePlanModal';
+import { type GateDenial } from '@/lib/billing/gateError';
 import { forgetMemory } from '@/lib/memory';
 import type { Artifact } from '@/lib/artifacts';
 import type { ChatSummary, MessageAttachment } from '@/lib/types';
@@ -88,7 +90,7 @@ const VoiceModeHost = dynamic(() => import('@/components/voice/VoiceModeHost'), 
       className="pointer-events-none fixed z-[84] bottom-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] right-4 sm:bottom-8 sm:right-8"
       aria-hidden
     >
-      <CompactControlSkeleton className="h-14 w-14" />
+      <CompactControlSkeleton className="h-12 w-12 sm:h-14 sm:w-14" />
     </div>
   ),
 });
@@ -115,6 +117,7 @@ export default function ChatPage() {
     () => isDevAuthClientEnabled()
   );
   const [quotaDenial, setQuotaDenial] = React.useState<GateDenial | null>(null);
+  const [upgradeDenial, setUpgradeDenial] = React.useState<GateDenial | null>(null);
   const {
     projects,
     pinnedProjects,
@@ -172,13 +175,15 @@ export default function ChatPage() {
     [showToast]
   );
 
-  const handleGateDenial = useCallback(
-    (denial: GateDenial) => {
-      setQuotaDenial(denial);
-      showToast(formatGateToast(denial), 'error');
-    },
-    [showToast]
-  );
+  const handleGateDenial = useCallback((denial: GateDenial) => {
+    if (denial.code === 'PLAN_REQUIRED') {
+      setUpgradeDenial(denial);
+      setQuotaDenial(null);
+      return;
+    }
+    setUpgradeDenial(null);
+    setQuotaDenial(denial);
+  }, []);
 
   // Auto-title generation: fired once, right after the first user message of
   // a brand-new chat is persisted (see useChat's `onFirstMessagePersisted`).
@@ -257,8 +262,11 @@ export default function ChatPage() {
     chatId,
     isLoading,
     isChatLoading,
+    streamPhase,
     handleSendMessage,
     regenerateMessage,
+    retryFailedMessage,
+    editAndResend,
     continueGenerating,
     stopGenerating,
     clearMessages,
@@ -552,13 +560,17 @@ export default function ChatPage() {
     resetCanvasState,
     createAndOpen: createCanvasAndOpen,
     openFromArtifact,
+    openFromMessageContent,
     handleAssistantContent,
+    flushAutosave: flushCanvasAutosave,
+    isDirty: isCanvasDirty,
     closeTab: closeCanvasTab,
     rename: renameCanvasTab,
     duplicate: duplicateCanvasTab,
     togglePin: toggleCanvasPin,
     setDraftContent,
     setDraftTitle,
+    discardDraftChanges,
     setMode: setCanvasMode,
     resolveConflict: resolveCanvasConflict,
     runAiEdit,
@@ -647,8 +659,9 @@ export default function ChatPage() {
     workspaceTab === 'automation'
       ? 32
       : Math.max(composerHeight > 0 ? composerHeight : 58, 58) +
-        160 +
-        mobileKeyboardInset;
+        (!isDesktop
+          ? 48 + Math.max(mobileKeyboardInset, 0)
+          : 160 + mobileKeyboardInset);
 
   const stickToBottomRef = useRef(true);
   const {
@@ -669,6 +682,211 @@ export default function ChatPage() {
       void regenerateMessage(messageId);
     },
     [regenerateMessage, stopTts]
+  );
+
+  const handleRetry = useCallback(
+    (messageId: string) => {
+      stopTts();
+      void retryFailedMessage(messageId);
+    },
+    [retryFailedMessage, stopTts]
+  );
+
+  const handleEditAndResend = useCallback(
+    (messageId: string, newContent: string) => {
+      stopTts();
+      void editAndResend(messageId, newContent);
+    },
+    [editAndResend, stopTts]
+  );
+
+  const handleMessageFeedback = useCallback(
+    (messageId: string, value: 'up' | 'down' | null) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, feedback: value } : m))
+      );
+    },
+    [setMessages]
+  );
+
+  const rememberChatScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    const id = chatIdRef.current;
+    if (el && id) scrollPositionsRef.current.set(id, el.scrollTop);
+  }, []);
+
+  /** Pending mobile confirmation before mounting Canvas. */
+  const [canvasConfirm, setCanvasConfirm] = useState<
+    | { source: 'message'; content: string; title?: string }
+    | { source: 'artifact'; artifact: Artifact }
+    | null
+  >(null);
+
+  const restoreChatScrollAfterCanvas = useCallback(() => {
+    const id = chatIdRef.current;
+    requestAnimationFrame(() => {
+      const el = messagesContainerRef.current;
+      if (!el || !id) return;
+      const saved = scrollPositionsRef.current.get(id);
+      if (saved != null) {
+        const prev = el.style.scrollBehavior;
+        el.style.scrollBehavior = 'auto';
+        el.scrollTop = saved;
+        el.style.scrollBehavior = prev;
+      }
+    });
+  }, []);
+
+  const handleCloseCanvasPanel = useCallback(() => {
+    closeCanvasPanel();
+    restoreChatScrollAfterCanvas();
+  }, [closeCanvasPanel, restoreChatScrollAfterCanvas]);
+
+  const handleOpenInCanvas = useCallback(
+    (_messageId: string, content: string) => {
+      rememberChatScroll();
+      // Mobile: confirm via bottom sheet, then full-screen Canvas.
+      // Desktop: open the resizable side panel immediately.
+      if (!isDesktop) {
+        setCanvasConfirm({ source: 'message', content });
+        return;
+      }
+      void openFromMessageContent(content);
+    },
+    [isDesktop, openFromMessageContent, rememberChatScroll]
+  );
+
+  const handleConfirmOpenCanvas = useCallback(() => {
+    if (!canvasConfirm) return;
+    const pending = canvasConfirm;
+    setCanvasConfirm(null);
+    rememberChatScroll();
+    if (pending.source === 'artifact') {
+      void openFromArtifact(pending.artifact);
+      return;
+    }
+    void openFromMessageContent(pending.content, pending.title);
+  }, [
+    canvasConfirm,
+    openFromArtifact,
+    openFromMessageContent,
+    rememberChatScroll,
+  ]);
+
+  const handleCancelOpenCanvas = useCallback(() => {
+    setCanvasConfirm(null);
+  }, []);
+
+  const handleShareMessage = useCallback(
+    async (_messageId: string, content: string) => {
+      const text = content.trim();
+      if (!text) return;
+      try {
+        if (navigator.share) {
+          await navigator.share({ text });
+        } else {
+          await navigator.clipboard.writeText(text);
+          showToast('Copied to clipboard', 'success');
+        }
+      } catch {
+        /* cancelled */
+      }
+    },
+    [showToast]
+  );
+
+  const handlePinMessage = useCallback(
+    (messageId: string) => {
+      let pinnedNow = false;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== messageId) return m;
+          pinnedNow = !m.pinned;
+          return { ...m, pinned: pinnedNow };
+        })
+      );
+      showToast(pinnedNow ? 'Message pinned' : 'Message unpinned', 'success');
+    },
+    [setMessages, showToast]
+  );
+
+  const handleSaveResponse = useCallback(
+    (messageId: string, content: string) => {
+      try {
+        const key = 'vani.savedResponses';
+        const existing = JSON.parse(window.localStorage.getItem(key) || '[]') as unknown[];
+        const entry = {
+          id: messageId,
+          content,
+          savedAt: new Date().toISOString(),
+          chatId: chatIdRef.current,
+        };
+        window.localStorage.setItem(key, JSON.stringify([entry, ...existing].slice(0, 50)));
+        showToast('Response saved', 'success');
+      } catch {
+        showToast("Couldn't save response", 'error');
+      }
+    },
+    [showToast]
+  );
+
+  const handleExportMessageMarkdown = useCallback(
+    (_messageId: string, content: string) => {
+      const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'vani-response.md';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Markdown exported', 'success');
+    },
+    [showToast]
+  );
+
+  const handleExportMessagePdf = useCallback(
+    async (_messageId: string, content: string) => {
+      try {
+        const { exportCanvas } = await import('@/lib/canvas/export');
+        await exportCanvas(
+          {
+            id: 'message-export',
+            userId: '',
+            title: 'VANI Response',
+            type: 'markdown',
+            content,
+            language: 'markdown',
+            revision: 1,
+            pinned: false,
+            chatId: chatIdRef.current,
+            sourceArtifactId: null,
+            closedAt: null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          'pdf'
+        );
+        showToast('PDF exported', 'success');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Couldn't export PDF", 'error');
+      }
+    },
+    [showToast]
+  );
+
+  const handleDeleteResponse = useCallback(
+    async (messageId: string) => {
+      const ok = await confirm({
+        title: 'Delete response?',
+        description: 'This removes the reply from this conversation on this device.',
+        confirmLabel: 'Delete',
+        variant: 'danger',
+      });
+      if (!ok) return;
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      showToast('Response deleted', 'success');
+    },
+    [confirm, setMessages, showToast]
   );
 
   const handleContinue = useCallback(
@@ -765,7 +983,7 @@ export default function ChatPage() {
     } catch (err) {
       removeChat(tempId);
       setChatId((current) => (current === tempId ? null : current));
-      showToast((err as Error).message || 'Failed to create new chat. Please try again.', 'error');
+      showToast((err as Error).message || "Couldn't create a new chat. Please try again.", 'error');
     }
   }, [messages, focusComposer, clearMessagesAndAgent, resetArtifactState, addOptimisticChat, activeProjectId, setChatId, createChatOnServer, replaceChat, removeChat, showToast]);
 
@@ -789,7 +1007,7 @@ export default function ChatPage() {
           updateChatTitle(id, previousTitle);
           updateProjectChatTitle(id, previousTitle);
         }
-        showToast((err as Error).message || 'Failed to rename chat. Please try again.', 'error');
+        showToast((err as Error).message || "Couldn't rename chat. Please try again.", 'error');
       }
     },
     [recentChats, projectChats, updateChatTitle, updateProjectChatTitle, saveTitle, showToast]
@@ -828,12 +1046,13 @@ export default function ChatPage() {
         if (activeProjectId) {
           void refreshProjectChats(activeProjectId);
         }
+        showToast('Chat deleted', 'success');
       } catch (err) {
         if (chatToDelete) insertChatAt(index, chatToDelete);
         if (activeProjectId) {
           void refreshProjectChats(activeProjectId);
         }
-        showToast((err as Error).message || 'Failed to delete chat. Please try again.', 'error');
+        showToast(err instanceof Error ? err.message : "Couldn't delete chat", 'error');
       }
     },
     [recentChats, confirm, removeChat, chatId, handleNewChat, deleteChatOnServer, insertChatAt, showToast, activeProjectId, refreshProjectChats]
@@ -850,12 +1069,10 @@ export default function ChatPage() {
 
       try {
         await setChatPinned(id, pinned);
+        showToast(pinned ? 'Chat pinned' : 'Chat unpinned', 'success');
       } catch (err) {
         updateChatPinned(id, previousPinned);
-        showToast(
-          (err as Error).message || `Failed to ${pinned ? 'pin' : 'unpin'} chat. Please try again.`,
-          'error'
-        );
+        showToast(err instanceof Error ? err.message : "Couldn't update pin", 'error');
       }
     },
     [recentChats, updateChatPinned, setChatPinned, showToast]
@@ -902,7 +1119,7 @@ export default function ChatPage() {
           result.deleted ? 'success' : 'info'
         );
       } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Unable to forget', 'error');
+        showToast(err instanceof Error ? err.message : "Couldn't forget memories", 'error');
       }
     },
     [confirm, showToast]
@@ -925,6 +1142,12 @@ export default function ChatPage() {
       const artifact = allArtifacts.find((a) => a.id === id);
       setActiveArtifactId(id);
       if (artifact) {
+        rememberChatScroll();
+        // On mobile, confirm first — never drop users into an editor unexpectedly.
+        if (!isDesktop) {
+          setCanvasConfirm({ source: 'artifact', artifact });
+          return;
+        }
         void openFromArtifact(artifact).then((doc) => {
           if (!doc) {
             setIsArtifactPanelOpen(true);
@@ -936,7 +1159,7 @@ export default function ChatPage() {
       setIsArtifactPanelOpen(true);
       setMobileSurface('artifact');
     },
-    [allArtifacts, openFromArtifact]
+    [allArtifacts, isDesktop, openFromArtifact, rememberChatScroll]
   );
 
   const handleCloseArtifactPanel = useCallback(() => {
@@ -973,13 +1196,6 @@ export default function ChatPage() {
     setIsArtifactFullscreen((v) => !v);
   }, []);
 
-  // Promote long assistant replies (no fences) into Canvas automatically.
-  useEffect(() => {
-    const last = messages[messages.length - 1];
-    if (!last || last.role !== 'assistant' || !last.content) return;
-    if (artifactsByMessage[last.id]?.length) return;
-    void handleAssistantContent(last.id, last.content, []);
-  }, [messages, artifactsByMessage, handleAssistantContent]);
 
   // Sidebar shows the target chat highlighted the instant it's clicked,
   // before GET /api/chat/:id resolves — falls back to the confirmed chatId
@@ -1046,7 +1262,7 @@ export default function ChatPage() {
         await loadChat(id);
       } catch (err) {
         pendingScrollRestoreRef.current = null;
-        showToast((err as Error).message || 'Unable to load this conversation. Please try again.', 'error');
+        showToast((err as Error).message || "Couldn't load this conversation. Please try again.", 'error');
       } finally {
         setPendingChatId(null);
       }
@@ -1174,6 +1390,18 @@ export default function ChatPage() {
   const closeBillingSettings = useCallback(() => setIsBillingOpen(false), []);
   const openAgentsSettings = useCallback(() => openBillingSettings('general'), [openBillingSettings]);
   const openBillingTab = useCallback(() => openBillingSettings('billing'), [openBillingSettings]);
+
+  /** Selecting an agent/mode must not bury the conversation behind canvas/artifact on mobile. */
+  const handleSelectAgent = useCallback(
+    (id: Parameters<typeof selectAgent>[0]) => {
+      selectAgent(id);
+      selectWorkspaceTab('chat');
+      setMobileSurface('chat');
+      if (isCanvasOpen) showCanvasChatSurface();
+    },
+    [selectAgent, selectWorkspaceTab, isCanvasOpen, showCanvasChatSurface]
+  );
+
   const openAnalytics = useCallback(() => setIsAnalyticsOpen(true), []);
   const closeAnalytics = useCallback(() => setIsAnalyticsOpen(false), []);
   const openAiDashboard = useCallback(() => setIsAiDashboardOpen(true), []);
@@ -1323,7 +1551,7 @@ export default function ChatPage() {
           mainFiles.refresh();
         } catch (err) {
           showToast(
-            err instanceof Error ? err.message : 'Unable to add knowledge',
+            err instanceof Error ? err.message : "Couldn't add to project knowledge",
             'error'
           );
         }
@@ -1367,7 +1595,7 @@ export default function ChatPage() {
         showToast('File removed', 'success');
       } catch (err) {
         showToast(
-          err instanceof Error ? err.message : 'Unable to delete file',
+          err instanceof Error ? err.message : "Couldn't remove file",
           'error'
         );
       }
@@ -1553,7 +1781,12 @@ export default function ChatPage() {
   const lastMessage = messages[messages.length - 1];
   const busy = isLoading || isAgentRunning || isResearchRunning;
   const showTypingIndicator =
-    busy && (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.content === '');
+    busy &&
+    (!lastMessage ||
+      lastMessage.role !== 'assistant' ||
+      (lastMessage.content === '' &&
+        lastMessage.status !== 'error' &&
+        !!lastMessage.isStreaming));
 
   const showAgentChrome =
     isAgentRunning || agentExecutor.steps.length > 0;
@@ -1689,7 +1922,7 @@ export default function ChatPage() {
       onNewChat={handleNewChat}
     >
       <KeyboardShortcutsProvider onVoice={openVoiceMode} onNewChat={handleNewChat}>
-    <div className="relative flex h-dvh max-h-dvh w-full overflow-hidden">
+    <div className="relative flex h-dvh max-h-dvh w-full min-w-0 overflow-hidden">
       {/* Ambient background — breathing mesh + floating light blobs */}
       <div className="app-background" aria-hidden="true">
         <div className="app-background-blobs">
@@ -1699,7 +1932,7 @@ export default function ChatPage() {
         </div>
       </div>
 
-    <div className="relative z-10 flex h-full w-full"
+    <div className="relative z-10 flex h-full w-full min-w-0 flex-col md:flex-row"
       onDragEnter={(e) => {
         e.preventDefault();
         pageDragDepthRef.current += 1;
@@ -1804,11 +2037,13 @@ export default function ChatPage() {
 
         {/* Main chat area — hidden on mobile while Canvas/Artifact surface is active */}
         <div
+          id="main-content"
+          role="main"
           className={
             (isCanvasOpen && canvasMobileSurface === 'canvas') ||
             (isArtifactPanelOpen && !isCanvasOpen && mobileSurface === 'artifact')
-              ? 'relative hidden min-h-0 min-w-0 flex-1 flex-col md:flex'
-              : 'relative flex min-h-0 min-w-0 flex-1 flex-col'
+              ? 'relative hidden min-h-0 min-w-0 w-full flex-1 flex-col overflow-x-hidden md:flex'
+              : 'relative flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-x-hidden'
           }
         >
           <Header onToggleSidebar={handleToggleSidebar} />
@@ -1834,8 +2069,8 @@ export default function ChatPage() {
             <div
               className={
                 isEmptyHome
-                  ? 'vani-chat-column flex w-full flex-col py-10 scroll-mt-0 max-md:pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] max-md:pt-[max(4rem,calc(env(safe-area-inset-top)+3rem))]'
-                  : 'vani-chat-column flex flex-col pt-6 md:pt-8 scroll-mt-0 max-md:pt-[max(3.5rem,calc(env(safe-area-inset-top)+2.75rem))]'
+                  ? 'vani-chat-column flex w-full min-w-0 flex-col py-10 scroll-mt-0 max-md:pb-[calc(8rem+env(safe-area-inset-bottom,0px))] max-md:pt-[max(4rem,calc(env(safe-area-inset-top)+3rem))]'
+                  : 'vani-chat-column flex min-w-0 flex-col pt-6 md:pt-8 scroll-mt-0 max-md:pt-[max(3.5rem,calc(env(safe-area-inset-top)+2.75rem))]'
               }
               style={{ paddingBottom: scrollBottomInset }}
             >
@@ -1925,6 +2160,16 @@ export default function ChatPage() {
                       onForgetMemory={handleForgetMemory}
                       onRegenerate={handleRegenerate}
                       onContinue={handleContinue}
+                      onRetry={handleRetry}
+                      onEditAndResend={handleEditAndResend}
+                      onFeedback={handleMessageFeedback}
+                      onOpenInCanvas={handleOpenInCanvas}
+                      onShareMessage={handleShareMessage}
+                      onPinMessage={handlePinMessage}
+                      onSaveResponse={handleSaveResponse}
+                      onExportMarkdown={handleExportMessageMarkdown}
+                      onExportPdf={handleExportMessagePdf}
+                      onDeleteResponse={handleDeleteResponse}
                       regenerateDisabled={isLoading}
                       ttsMessageId={ttsMessageId}
                       ttsState={ttsState}
@@ -1935,7 +2180,9 @@ export default function ChatPage() {
                     />
 
                     <AnimatePresence>
-                      {showTypingIndicator ? <TypingIndicator key="typing" /> : null}
+                      {showTypingIndicator ? (
+                        <TypingIndicator key="typing" phase={streamPhase} />
+                      ) : null}
                     </AnimatePresence>
 
                     {showAgentChrome && (
@@ -2006,7 +2253,7 @@ export default function ChatPage() {
                   onHeightChange={handleComposerHeightChange}
                   agents={agentTypes}
                   selectedAgent={selectedAgent}
-                  onSelectAgent={selectAgent}
+                  onSelectAgent={handleSelectAgent}
                   webSearchEnabled={webSearchEnabled}
                   deepResearchEnabled={deepResearchEnabled}
                   onToggleWebSearch={setWebSearchEnabled}
@@ -2031,6 +2278,15 @@ export default function ChatPage() {
               onDismiss={() => setQuotaDenial(null)}
             />
           ) : null}
+          <UpgradePlanModal
+            open={Boolean(upgradeDenial)}
+            denial={upgradeDenial}
+            onClose={() => setUpgradeDenial(null)}
+            onUpgrade={() => {
+              setUpgradeDenial(null);
+              openBillingSettings('billing');
+            }}
+          />
           {!isEmptyHome && workspaceTab !== 'automation' && !voiceLive ? (
           <ChatInput
             ref={chatInputRef}
@@ -2047,7 +2303,7 @@ export default function ChatPage() {
             onHeightChange={handleComposerHeightChange}
             agents={agentTypes}
             selectedAgent={selectedAgent}
-            onSelectAgent={selectAgent}
+            onSelectAgent={handleSelectAgent}
             webSearchEnabled={webSearchEnabled}
             deepResearchEnabled={deepResearchEnabled}
             onToggleWebSearch={setWebSearchEnabled}
@@ -2314,8 +2570,18 @@ export default function ChatPage() {
                 onTitleChange={setDraftTitle}
                 onSetMode={setCanvasMode}
                 onToggleFullscreen={() => setCanvasFullscreen((v) => !v)}
-                onClosePanel={closeCanvasPanel}
+                onClosePanel={handleCloseCanvasPanel}
                 onShowChat={handleShowChatSurface}
+                isDirty={isCanvasDirty()}
+                onSave={async () => {
+                  if (activeCanvasId) await flushCanvasAutosave(activeCanvasId);
+                }}
+                onSaveAndReturn={async () => {
+                  if (activeCanvasId) await flushCanvasAutosave(activeCanvasId);
+                }}
+                onDiscardAndReturn={() => {
+                  if (activeCanvasId) discardDraftChanges(activeCanvasId);
+                }}
                 onResolveConflict={(id, strategy) => void resolveCanvasConflict(id, strategy)}
                 onAiEdit={(id, action, opts) => void runAiEdit(id, action, opts)}
                 onLoadVersions={(id) => void loadCanvasVersions(id)}
@@ -2331,6 +2597,17 @@ export default function ChatPage() {
             </Suspense>
           )}
         </AnimatePresence>
+
+        <OpenCanvasConfirmSheet
+          open={Boolean(canvasConfirm)}
+          onCancel={handleCancelOpenCanvas}
+          onConfirm={handleConfirmOpenCanvas}
+          title={
+            canvasConfirm?.source === 'artifact'
+              ? canvasConfirm.artifact.title
+              : canvasConfirm?.title
+          }
+        />
 
         {/* Artifact panel — fallback when Canvas is not open */}
         <AnimatePresence>

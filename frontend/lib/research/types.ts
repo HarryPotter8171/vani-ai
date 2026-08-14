@@ -1,5 +1,7 @@
 /** Deep Research domain types */
 
+import { getUserFriendlyError } from '@/lib/userFacingError';
+
 export type ResearchPhase =
   | 'planning'
   | 'searching'
@@ -326,7 +328,10 @@ export function reduceResearchState(
       break;
     case 'error':
       next.status = 'failed';
-      next.error = event.error || 'Research failed';
+      next.error = getUserFriendlyError(event.error, {
+        feature: 'research',
+        fallback: 'Research failed',
+      });
       break;
     case 'cancelled':
       next.status = 'cancelled';

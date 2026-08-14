@@ -65,6 +65,9 @@ export async function fetchExportPayload(
 /** Download CSV via authenticated fetch (blob). */
 export async function downloadAnalyticsCsv(scope: 'user' | 'admin' = 'user'): Promise<void> {
   const token = await getAccessToken();
+  if (!token) {
+    throw new Error('Unable to sign in. Please try again.');
+  }
   const path =
     scope === 'admin' ? '/analytics/admin/export?format=csv' : '/analytics/export?format=csv';
   const res = await fetch(`${getApiBaseUrl()}${path}`, {

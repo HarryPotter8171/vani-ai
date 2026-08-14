@@ -222,31 +222,45 @@ export default function AnalyticsPanel({
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                     <StatCard label="Total Chats" value={formatNum(totals.chats)} />
                     <StatCard label="Total Tokens" value={formatNum(totals.tokens)} />
-                    <StatCard
-                      label="Images Generated"
-                      value={formatNum(totals.imagesGenerated)}
- />
-                    <StatCard
-                      label="Voice Minutes"
-                      value={formatNum(totals.voiceMinutes)}
- />
-                    <StatCard
-                      label="Deep Research"
-                      value={formatNum(totals.deepResearchSessions)}
- />
-                    <StatCard
-                      label="Browser Sessions"
-                      value={formatNum(totals.browserSessions)}
- />
-                    <StatCard label="MCP Calls" value={formatNum(totals.mcpCalls)} />
-                    <StatCard
-                      label="Code Interpreter"
-                      value={formatNum(totals.codeInterpreterRuns)}
- />
-                    <StatCard
-                      label="File Storage"
-                      value={formatBytes(totals.fileStorageBytes)}
- />
+                    {(totals.imagesGenerated ?? 0) > 0 ? (
+                      <StatCard
+                        label="Images Generated"
+                        value={formatNum(totals.imagesGenerated)}
+                      />
+                    ) : null}
+                    {(totals.voiceMinutes ?? 0) > 0 ? (
+                      <StatCard
+                        label="Voice Minutes"
+                        value={formatNum(totals.voiceMinutes)}
+                      />
+                    ) : null}
+                    {(totals.deepResearchSessions ?? 0) > 0 ? (
+                      <StatCard
+                        label="Deep Research"
+                        value={formatNum(totals.deepResearchSessions)}
+                      />
+                    ) : null}
+                    {(totals.browserSessions ?? 0) > 0 ? (
+                      <StatCard
+                        label="Browser Sessions"
+                        value={formatNum(totals.browserSessions)}
+                      />
+                    ) : null}
+                    {(totals.mcpCalls ?? 0) > 0 ? (
+                      <StatCard label="MCP Calls" value={formatNum(totals.mcpCalls)} />
+                    ) : null}
+                    {(totals.codeInterpreterRuns ?? 0) > 0 ? (
+                      <StatCard
+                        label="Code Interpreter"
+                        value={formatNum(totals.codeInterpreterRuns)}
+                      />
+                    ) : null}
+                    {(totals.fileStorageBytes ?? 0) > 0 ? (
+                      <StatCard
+                        label="File Storage"
+                        value={formatBytes(totals.fileStorageBytes)}
+                      />
+                    ) : null}
                     <StatCard label="Plan" value={analytics.plan.planId} />
                   </div>
 
@@ -286,7 +300,9 @@ export default function AnalyticsPanel({
                       Remaining quotas
                     </h3>
                     <div className="space-y-3">
-                      {(analytics.remaining || []).map((row) => {
+                      {(analytics.remaining || [])
+                        .filter((row) => row.unlimited || row.limit > 0)
+                        .map((row) => {
                         const pct = row.unlimited ? 0 : row.percentUsed ?? 0;
                         const barColor =
                           pct >= 90

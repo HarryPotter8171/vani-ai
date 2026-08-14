@@ -1,3 +1,4 @@
+import { toPublicErrorMessage } from "../utils/errors.js";
 import {
   browserManager,
   browserPermissions,
@@ -37,7 +38,7 @@ export const startRun = async (req, res) => {
     res.status(result.needsApproval ? 202 : 200).json(result);
   } catch (err) {
     console.error("[browser]", err);
-    res.status(400).json({ error: err.message || "Unable to start browser run" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to start browser run") });
   }
 };
 
@@ -48,7 +49,7 @@ export const listRuns = async (req, res) => {
     res.json({ runs });
   } catch (err) {
     console.error("[browser]", err);
-    res.status(500).json({ error: err.message || "Unable to list browser runs" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list browser runs") });
   }
 };
 
@@ -63,7 +64,7 @@ export const getRun = async (req, res) => {
     res.json({ run: snapshot });
   } catch (err) {
     console.error("[browser]", err);
-    res.status(500).json({ error: err.message || "Unable to load browser run" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to load browser run") });
   }
 };
 
@@ -73,7 +74,7 @@ export const pauseRun = async (req, res) => {
     const run = browserManager.pause(req.params.id, String(user._id));
     res.json({ run });
   } catch (err) {
-    res.status(404).json({ error: err.message || "Unable to pause" });
+    res.status(404).json({ error: toPublicErrorMessage(err, "Unable to pause") });
   }
 };
 
@@ -83,7 +84,7 @@ export const resumeRun = async (req, res) => {
     const run = browserManager.resume(req.params.id, String(user._id));
     res.json({ run });
   } catch (err) {
-    res.status(404).json({ error: err.message || "Unable to resume" });
+    res.status(404).json({ error: toPublicErrorMessage(err, "Unable to resume") });
   }
 };
 
@@ -93,7 +94,7 @@ export const stopRun = async (req, res) => {
     const run = await browserManager.stop(req.params.id, String(user._id));
     res.json({ run });
   } catch (err) {
-    res.status(404).json({ error: err.message || "Unable to stop" });
+    res.status(404).json({ error: toPublicErrorMessage(err, "Unable to stop") });
   }
 };
 
@@ -104,7 +105,7 @@ export const cleanupRun = async (req, res) => {
     if (!ok) return res.status(404).json({ error: "Browser run not found" });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to cleanup" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to cleanup") });
   }
 };
 
@@ -123,7 +124,7 @@ export const getScreenshot = async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.send(buf);
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to load screenshot" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to load screenshot") });
   }
 };
 
@@ -133,7 +134,7 @@ export const listApprovals = async (req, res) => {
     const approvals = browserPermissions.listPendingApprovals(String(user._id));
     res.json({ approvals });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to list approvals" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list approvals") });
   }
 };
 
@@ -151,7 +152,7 @@ export const resolveApproval = async (req, res) => {
     );
     res.json({ ok: true, approval, choice });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Unable to resolve approval" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to resolve approval") });
   }
 };
 
@@ -161,7 +162,7 @@ export const listPermissions = async (req, res) => {
     const permissions = await browserPermissions.listPermissions(String(user._id));
     res.json({ permissions });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to list permissions" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list permissions") });
   }
 };
 
@@ -173,7 +174,7 @@ export const revokePermission = async (req, res) => {
     await browserPermissions.revoke(String(user._id), origin);
     res.json({ ok: true });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Unable to revoke permission" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to revoke permission") });
   }
 };
 

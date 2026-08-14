@@ -161,7 +161,7 @@ export default function AdminDashboard({ open, onClose }: AdminDashboardProps) {
           ? s.redis.healthy
             ? 'Connected'
             : 'Unreachable'
-          : 'Not configured (in-process fallback)' },
+          : 'Not configured'},
       {
         icon: Activity,
         name: 'Queue',

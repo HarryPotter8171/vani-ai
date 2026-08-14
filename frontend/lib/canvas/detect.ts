@@ -1,7 +1,10 @@
 import type { Artifact, ArtifactLanguage } from '@/lib/artifacts';
 import type { CanvasType } from '@/lib/canvas/types';
 
-/** Character threshold for promoting a long assistant reply into Canvas. */
+/**
+ * @deprecated Auto-open from message length/artifacts is disabled.
+ * Kept for callers that still import the constant; never used to open Canvas.
+ */
 export const LONG_CONTENT_THRESHOLD = 1200;
 
 const ARTIFACT_TO_CANVAS: Partial<Record<ArtifactLanguage, CanvasType>> = {
@@ -70,13 +73,15 @@ export function inferCanvasTypeFromContent(content: string): CanvasType {
   return 'markdown';
 }
 
+/**
+ * Canvas never auto-opens — not from streaming, artifacts, length, or
+ * prompt phrasing. Open only via explicit UI ("Open in Canvas", etc.).
+ */
 export function shouldAutoOpenCanvasFromMessage(
-  content: string,
-  artifacts: Artifact[]
+  _content: string,
+  _artifacts: Artifact[]
 ): boolean {
-  if (artifacts.length > 0) return true;
-  const plain = content.replace(/```[\s\S]*?```/g, '').trim();
-  return plain.length >= LONG_CONTENT_THRESHOLD;
+  return false;
 }
 
 export function titleFromContent(content: string, fallback = 'Canvas'): string {

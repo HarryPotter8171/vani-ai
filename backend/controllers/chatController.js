@@ -717,7 +717,9 @@ export const createOrUpdateChat = async (req, res) => {
             name: event.name,
             displayName: event.displayName,
             ok: event.ok,
-            error: event.error,
+            error: event.error
+              ? "This step couldn't be completed."
+              : undefined,
           },
         });
         continue;
@@ -933,8 +935,10 @@ export const createOrUpdateChat = async (req, res) => {
 
     send({ done: true, chatId: chat?._id, projectId: project?._id || null });
   } catch (err) {
-    console.error("Vertex Stream Error:", err);
-    send({ error: err.message || "Streaming failed" });
+    console.error("Stream Error:", err);
+    send({
+      error: "We couldn't generate a response. Please try again.",
+    });
   } finally {
     if (!res.writableEnded) res.end();
   }

@@ -50,6 +50,18 @@ export interface MessageUsage {
   modelKey?: string;
 }
 
+/** User-facing generation phase — never expose tool/provider internals. */
+export type StreamPhase =
+  | 'thinking'
+  | 'searching'
+  | 'writing'
+  | 'using_tools'
+  | 'finished';
+
+export type MessageStatus = 'complete' | 'error';
+
+export type MessageFeedback = 'up' | 'down';
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -57,6 +69,12 @@ export interface Message {
   isStreaming?: boolean;
   /** True when the user stopped generation mid-reply — enables Continue. */
   wasInterrupted?: boolean;
+  /** Failed generation — show error card instead of raw error text. */
+  status?: MessageStatus;
+  /** Local like/dislike (UI only until a feedback API exists). */
+  feedback?: MessageFeedback | null;
+  /** Local pin for message actions (UI only). */
+  pinned?: boolean;
   attachments?: MessageAttachment[];
   meta?: MessageMeta;
   usage?: MessageUsage;

@@ -1,3 +1,4 @@
+import { toPublicErrorMessage } from "../utils/errors.js";
 /**
  * Analytics HTTP handlers — user analytics + platform admin dashboard.
  */
@@ -23,7 +24,7 @@ export const getMyAnalytics = async (req, res) => {
   } catch (err) {
     console.error("[analytics]", err);
     res.status(err.status || 500).json({
-      error: err.message || "Unable to load analytics",
+      error: toPublicErrorMessage(err, "Unable to load analytics"),
     });
   }
 };
@@ -44,7 +45,7 @@ export const getMyCharts = async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to load charts" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to load charts") });
   }
 };
 
@@ -78,7 +79,7 @@ export const exportMyAnalytics = async (req, res) => {
     res.send(csv);
   } catch (err) {
     console.error("[analytics:export]", err);
-    res.status(500).json({ error: err.message || "Unable to export analytics" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to export analytics") });
   }
 };
 
@@ -88,7 +89,7 @@ export const getAdminDashboard = async (req, res) => {
     res.json({ dashboard });
   } catch (err) {
     console.error("[analytics:admin]", err);
-    res.status(500).json({ error: err.message || "Unable to load admin dashboard" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to load admin dashboard") });
   }
 };
 
@@ -97,7 +98,7 @@ export const getAdminHealth = async (req, res) => {
     const health = await adminAnalyticsService.getSystemHealth();
     res.json({ health });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to load system health" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to load system health") });
   }
 };
 
@@ -110,7 +111,7 @@ export const getAdminLogs = async (req, res) => {
     });
     res.json({ logs });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to load logs" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to load logs") });
   }
 };
 
@@ -138,7 +139,7 @@ export const exportAdminAnalytics = async (req, res) => {
     res.send(csv);
   } catch (err) {
     console.error("[analytics:admin:export]", err);
-    res.status(500).json({ error: err.message || "Unable to export admin analytics" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to export admin analytics") });
   }
 };
 

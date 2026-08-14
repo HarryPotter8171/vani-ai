@@ -21,16 +21,28 @@ import {
   type CanvasViewMode,
   artifactToCanvasInput,
   inferCanvasTypeFromContent,
-  shouldAutoOpenCanvasFromMessage,
   titleFromContent,
 } from '@/lib/canvas';
 import type { Artifact } from '@/lib/artifacts';
 import { GateDenialError, type GateDenial } from '@/lib/billing/gateError';
+import { toUserFacingError } from '@/lib/userFacingError';
 
 const AUTOSAVE_MS = 900;
 const DEFAULT_WIDTH = 520;
 const MIN_WIDTH = 360;
 const MAX_WIDTH_RATIO = 0.62;
+const PANEL_WIDTH_KEY = 'vani.canvas.panelWidth';
+
+function readStoredPanelWidth(): number {
+  if (typeof window === 'undefined') return DEFAULT_WIDTH;
+  try {
+    const raw = window.localStorage.getItem(PANEL_WIDTH_KEY);
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_WIDTH;
+  } catch {
+    return DEFAULT_WIDTH;
+  }
+}
 
 interface UseCanvasOptions {
   chatId: string | null;
@@ -49,7 +61,7 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
   const [conflicts, setConflicts] = useState<Record<string, CanvasDocument | null>>({});
   const [isOpen, setIsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
+  const [panelWidth, setPanelWidthState] = useState(DEFAULT_WIDTH);
   const [versions, setVersions] = useState<CanvasVersionSummary[]>([]);
   const [diffBaseline, setDiffBaseline] = useState<string | null>(null);
   const [isAiBusy, setIsAiBusy] = useState(false);
@@ -57,7 +69,6 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
 
   const autosaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const seenArtifactIds = useRef(new Set<string>());
-  const seenLongMessageIds = useRef(new Set<string>());
   const documentsRef = useRef(documents);
   const draftsRef = useRef(drafts);
   const titlesRef = useRef(titles);
@@ -80,13 +91,30 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     titlesRef.current = titles;
   }, [titles]);
 
+  const clampWidth = useCallback((width: number) => {
+    if (typeof window === 'undefined') return width;
+    const max = Math.floor(window.innerWidth * MAX_WIDTH_RATIO);
+    return Math.min(Math.max(width, MIN_WIDTH), Math.max(max, MIN_WIDTH));
+  }, []);
+
+  // Restore remembered desktop panel width once on mount.
+  useEffect(() => {
+    setPanelWidthState((prev) => {
+      const stored = readStoredPanelWidth();
+      if (typeof window === 'undefined') return stored || prev;
+      const max = Math.floor(window.innerWidth * MAX_WIDTH_RATIO);
+      return Math.min(Math.max(stored, MIN_WIDTH), Math.max(max, MIN_WIDTH));
+    });
+  }, []);
+
   const reportError = useCallback((err: unknown, fallback: string) => {
     if (err instanceof GateDenialError) {
       onGateDenialRef.current?.(err.denial);
       if (!onGateDenialRef.current) onErrorRef.current?.(err.message);
       return;
     }
-    const message = err instanceof Error ? err.message : fallback;
+    const message = toUserFacingError(err, fallback);
+    console.error('[canvas]', err);
     onErrorRef.current?.(message);
   }, []);
 
@@ -105,7 +133,7 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     setSaveStatus((prev) => ({ ...prev, [doc.id]: prev[doc.id] ?? 'saved' }));
     setViewMode((prev) => ({
       ...prev,
-      [doc.id]: prev[doc.id] ?? (doc.type === 'code' || doc.type === 'json' || doc.type === 'csv' || doc.type === 'plaintext' ? 'edit' : 'split'),
+      [doc.id]: prev[doc.id] ?? 'edit',
     }));
   }, [upsertDocument]);
 
@@ -126,7 +154,6 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     setDiffBaseline(null);
     setMobileSurface('chat');
     seenArtifactIds.current = new Set();
-    seenLongMessageIds.current = new Set();
   }, []);
 
   // Load open canvases for the active chat.
@@ -217,6 +244,18 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     [scheduleAutosave]
   );
 
+  const discardDraftChanges = useCallback((id: string) => {
+    const doc = documentsRef.current[id];
+    if (!doc) return;
+    if (autosaveTimers.current[id]) {
+      clearTimeout(autosaveTimers.current[id]);
+      delete autosaveTimers.current[id];
+    }
+    setDrafts((prev) => ({ ...prev, [id]: doc.content }));
+    setTitles((prev) => ({ ...prev, [id]: doc.title }));
+    setSaveStatus((prev) => ({ ...prev, [id]: 'saved' }));
+  }, []);
+
   const createAndOpen = useCallback(
     async (input: {
       title?: string;
@@ -254,53 +293,49 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     [chatId, createAndOpen]
   );
 
-  /** Auto-open canvases for new artifacts / long assistant messages. */
+  /**
+   * Sync content into canvases the user already opened from an artifact.
+   * Never auto-opens Canvas — that requires an explicit user action.
+   */
   const handleAssistantContent = useCallback(
-    async (messageId: string, content: string, artifacts: Artifact[]) => {
-      if (!shouldAutoOpenCanvasFromMessage(content, artifacts)) return;
-
+    async (_messageId: string, _content: string, artifacts: Artifact[]) => {
       for (const artifact of artifacts) {
-        if (seenArtifactIds.current.has(artifact.id)) {
-          // Keep streaming artifact canvases in sync.
-          const existingId = Object.values(documentsRef.current).find(
-            (d) => d.sourceArtifactId === artifact.id
-          )?.id;
-          if (existingId && !draftsRef.current[existingId]?.length) {
-            setDrafts((prev) => ({ ...prev, [existingId]: artifact.content }));
-          } else if (existingId) {
-            const doc = documentsRef.current[existingId];
-            if (doc && draftsRef.current[existingId] === doc.content) {
-              setDrafts((prev) => ({ ...prev, [existingId]: artifact.content }));
-              setDocuments((prev) =>
-                prev[existingId]
-                  ? {
-                      ...prev,
-                      [existingId]: { ...prev[existingId], content: artifact.content },
-                    }
-                  : prev
-              );
-            }
-          }
-          continue;
-        }
-        seenArtifactIds.current.add(artifact.id);
-        await openFromArtifact(artifact);
-      }
+        const existingId = Object.values(documentsRef.current).find(
+          (d) => d.sourceArtifactId === artifact.id
+        )?.id;
+        if (!existingId) continue;
 
-      if (
-        artifacts.length === 0 &&
-        !seenLongMessageIds.current.has(messageId) &&
-        content.trim().length >= 1200
-      ) {
-        seenLongMessageIds.current.add(messageId);
-        await createAndOpen({
-          title: titleFromContent(content),
-          type: inferCanvasTypeFromContent(content),
-          content,
-        });
+        const doc = documentsRef.current[existingId];
+        const draft = draftsRef.current[existingId];
+        // Only mirror streaming updates when the user has not diverged.
+        if (doc && (draft === undefined || draft === doc.content || !draft.length)) {
+          setDrafts((prev) => ({ ...prev, [existingId]: artifact.content }));
+          setDocuments((prev) =>
+            prev[existingId]
+              ? {
+                  ...prev,
+                  [existingId]: { ...prev[existingId], content: artifact.content },
+                }
+              : prev
+          );
+        }
       }
     },
-    [createAndOpen, openFromArtifact]
+    []
+  );
+
+  /** Explicitly open the assistant response in Canvas (More → Open in Canvas). */
+  const openFromMessageContent = useCallback(
+    async (content: string, title?: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) return null;
+      return createAndOpen({
+        title: title || titleFromContent(trimmed),
+        type: inferCanvasTypeFromContent(trimmed),
+        content: trimmed,
+      });
+    },
+    [createAndOpen]
   );
 
   const closeTab = useCallback(
@@ -371,7 +406,14 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
   );
 
   const setMode = useCallback((id: string, mode: CanvasViewMode) => {
-    setViewMode((prev) => ({ ...prev, [id]: mode }));
+    // Split is desktop-only; coerce away if somehow requested on a small viewport.
+    const next =
+      mode === 'split' &&
+      typeof window !== 'undefined' &&
+      window.matchMedia('(max-width: 767px)').matches
+        ? 'edit'
+        : mode;
+    setViewMode((prev) => ({ ...prev, [id]: next }));
   }, []);
 
   const resolveConflict = useCallback(
@@ -495,11 +537,36 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     [openIds, documents]
   );
 
-  const clampWidth = useCallback((width: number) => {
-    if (typeof window === 'undefined') return width;
-    const max = Math.floor(window.innerWidth * MAX_WIDTH_RATIO);
-    return Math.min(Math.max(width, MIN_WIDTH), Math.max(max, MIN_WIDTH));
-  }, []);
+  const setPanelWidth = useCallback(
+    (w: number) => {
+      const next = clampWidth(w);
+      setPanelWidthState(next);
+      try {
+        window.localStorage.setItem(PANEL_WIDTH_KEY, String(next));
+      } catch {
+        /* ignore quota */
+      }
+    },
+    [clampWidth]
+  );
+
+  const isDirty = useCallback(
+    (id: string | null = activeId) => {
+      if (!id) return false;
+      const doc = documents[id];
+      if (!doc) return false;
+      const draft = drafts[id] ?? doc.content;
+      const title = titles[id] ?? doc.title;
+      const status = saveStatus[id];
+      return (
+        status === 'dirty' ||
+        status === 'saving' ||
+        draft !== doc.content ||
+        title !== doc.title
+      );
+    },
+    [activeId, documents, drafts, titles, saveStatus]
+  );
 
   return {
     isOpen,
@@ -512,8 +579,9 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     isFullscreen,
     setIsFullscreen,
     panelWidth,
-    setPanelWidth: (w: number) => setPanelWidth(clampWidth(w)),
+    setPanelWidth,
     clampWidth,
+    isDirty,
     mobileSurface,
     setMobileSurface,
     openTabs,
@@ -533,6 +601,7 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     openDocument,
     createAndOpen,
     openFromArtifact,
+    openFromMessageContent,
     handleAssistantContent,
     closeTab,
     rename,
@@ -540,6 +609,7 @@ export function useCanvas({ chatId, onError, onGateDenial }: UseCanvasOptions) {
     togglePin,
     setDraftContent,
     setDraftTitle,
+    discardDraftChanges,
     setMode,
     flushAutosave,
     resolveConflict,

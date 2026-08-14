@@ -1,5 +1,10 @@
 import User from "../models/User.js";
 import { verifyAccessToken } from "../utils/jwt.js";
+import {
+  ensureMongoReady,
+  isMongoUnavailableError,
+  sendDatabaseUnavailable,
+} from "../config/mongoReady.js";
 
 /**
  * Extract bearer token from Authorization header, or access_token query
@@ -25,6 +30,7 @@ export function extractAccessToken(req) {
  * Does NOT create users — identity must already exist (see POST /api/auth/sync).
  */
 async function loadUserFromClaims(claims) {
+  await ensureMongoReady();
   const user = await User.findOne({ email: claims.email });
   if (!user) return null;
   return {
@@ -43,6 +49,12 @@ async function loadUserFromClaims(claims) {
  */
 export async function requireAuth(req, res, next) {
   try {
+    try {
+      await ensureMongoReady();
+    } catch {
+      return sendDatabaseUnavailable(res);
+    }
+
     const token = extractAccessToken(req);
     if (!token) {
       return res.status(401).json({ error: "Authentication required" });
@@ -71,9 +83,12 @@ export async function requireAuth(req, res, next) {
     req.user = user;
     return next();
   } catch (err) {
+    if (isMongoUnavailableError(err)) {
+      return sendDatabaseUnavailable(res);
+    }
     if (err.code === "AUTH_SECRET_MISSING") {
       console.error("[auth]", err.message);
-      return res.status(500).json({ error: "Authentication is not configured" });
+      return res.status(500).json({ error: "Unable to sign in right now. Please try again." });
     }
     console.error("[auth]", err);
     return res.status(401).json({ error: "Authentication required" });
@@ -118,6 +133,12 @@ export async function requireFileAccess(req, res, next) {
       return next();
     }
 
+    try {
+      await ensureMongoReady();
+    } catch {
+      return sendDatabaseUnavailable(res);
+    }
+
     const user = await loadUserFromClaims(claims);
     if (!user) {
       return res.status(401).json({
@@ -129,9 +150,12 @@ export async function requireFileAccess(req, res, next) {
     req.user = user;
     return next();
   } catch (err) {
+    if (isMongoUnavailableError(err)) {
+      return sendDatabaseUnavailable(res);
+    }
     if (err.code === "AUTH_SECRET_MISSING") {
       console.error("[auth]", err.message);
-      return res.status(500).json({ error: "Authentication is not configured" });
+      return res.status(500).json({ error: "Unable to sign in right now. Please try again." });
     }
     console.error("[auth]", err);
     return res.status(401).json({ error: "Authentication required" });

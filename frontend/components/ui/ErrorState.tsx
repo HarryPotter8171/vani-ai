@@ -6,6 +6,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import { SPRING, EASE } from '@/lib/motion';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface ErrorStateProps {
   title?: string;
@@ -29,11 +30,13 @@ export function ErrorState({
   className,
   compact = false,
 }: ErrorStateProps) {
+  const friendlyMessage = getUserFriendlyError(message, 'Please try again in a moment.');
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.28, ease: EASE.smooth }}
+      transition={{ duration: 0.2, ease: EASE.smooth }}
       role="alert"
       className={cn(
         'flex flex-col items-center justify-center text-center',
@@ -51,6 +54,7 @@ export function ErrorState({
           'bg-danger-muted text-danger',
           'ring-8 ring-danger/[0.04]'
         )}
+        aria-hidden
       >
         <AlertTriangle size={compact ? 16 : 20} strokeWidth={1.75} />
       </motion.div>
@@ -64,14 +68,14 @@ export function ErrorState({
         >
           {title}
         </p>
-        {message ? (
+        {friendlyMessage ? (
           <p
             className={cn(
               'mt-1 leading-[1.45] text-text-secondary',
               compact ? 'text-caption' : 'text-sm'
             )}
           >
-            {message}
+            {friendlyMessage}
           </p>
         ) : null}
       </div>
@@ -87,7 +91,7 @@ export function ErrorState({
             leftIcon={
               retrying ? undefined : <RefreshCw size={13} strokeWidth={2.25} />
             }
-            className="shadow-1"
+            className="min-h-[44px] shadow-1 touch-manipulation"
           >
             {retrying ? 'Retrying…' : retryLabel}
           </Button>

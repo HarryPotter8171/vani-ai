@@ -23,6 +23,7 @@ import type {
   McpServerInput,
   McpToolInfo,
 } from '@/lib/mcp/types';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface UseMcpOptions {
   enabled?: boolean;
@@ -65,7 +66,9 @@ export function useMcp({ enabled = true }: UseMcpOptions = {}) {
         });
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Unable to load MCP servers');
+        setError(
+          getUserFriendlyError(err, { fallback: 'Unable to load MCP servers' })
+        );
       } finally {
         if (!cancelled) setIsLoading(false);
       }

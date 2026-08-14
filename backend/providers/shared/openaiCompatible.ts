@@ -112,7 +112,7 @@ export function createOpenAICompatibleProvider(
       if (!isConfigured()) {
         yield {
           type: "error",
-          error: `${cfg.displayName} is not configured`,
+          error: "This feature is temporarily unavailable. Please try again later.",
           retryable: true,
         };
         return;
@@ -155,9 +155,10 @@ export function createOpenAICompatibleProvider(
             : {}),
         });
       } catch (err) {
+        console.error(`[provider:${cfg.id}] stream failed:`, err);
         yield {
           type: "error",
-          error: err instanceof Error ? err.message : String(err),
+          error: "We couldn't generate a response. Please try again.",
           retryable: true,
         };
         return;

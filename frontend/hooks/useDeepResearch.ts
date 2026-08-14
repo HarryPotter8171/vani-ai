@@ -13,6 +13,7 @@ import {
   type ResearchStreamEvent,
 } from '@/lib/research';
 import { GateDenialError, type GateDenial } from '@/lib/billing/gateError';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface UseDeepResearchOptions {
   chatId?: string | null;
@@ -164,7 +165,12 @@ export function useDeepResearch(options: UseDeepResearchOptions = {}) {
     }
 
     if (event.type === 'error' && event.error) {
-      onErrorRef.current?.(event.error);
+      onErrorRef.current?.(
+        getUserFriendlyError(event.error, {
+          feature: 'research',
+          fallback: 'Deep Research failed',
+        })
+      );
     }
   }, []);
 
@@ -207,14 +213,20 @@ export function useDeepResearch(options: UseDeepResearchOptions = {}) {
         }
         if (err instanceof GateDenialError) {
           onGateDenialRef.current?.(err.denial);
-          const message = err.message || 'Deep Research failed';
+          const message = getUserFriendlyError(err, {
+            feature: 'research',
+            fallback: 'Deep Research failed',
+          });
           if (!onGateDenialRef.current) onErrorRef.current?.(message);
           setState((prev) =>
             reduceResearchState(prev, { type: 'error', error: message })
           );
           return null;
         }
-        const message = (err as Error).message || 'Deep Research failed';
+        const message = getUserFriendlyError(err, {
+          feature: 'research',
+          fallback: 'Deep Research failed',
+        });
         onErrorRef.current?.(message);
         setState((prev) =>
           reduceResearchState(prev, { type: 'error', error: message })

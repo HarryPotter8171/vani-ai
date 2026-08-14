@@ -312,12 +312,14 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
           isInline
             ? cn(
                 // Desktop empty-home: inline under the hero (unchanged).
-                'relative z-10 mx-auto mt-10 w-full max-w-[800px] px-0',
+                'relative z-10 mx-auto mt-10 w-full max-w-full md:max-w-3xl lg:max-w-[800px] px-0',
                 // Mobile: pin to the visual viewport like ChatGPT/Gemini —
                 // absolute/inline inside h-screen was clipped by overflow:hidden.
                 'max-md:pointer-events-none max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[45]',
                 'max-md:mx-0 max-md:mt-0 max-md:flex max-md:w-full max-md:max-w-none max-md:justify-center',
-                'max-md:px-3 max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]',
+                'max-md:px-3 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]',
+                'max-md:pl-[max(0.75rem,env(safe-area-inset-left,0px))]',
+                'max-md:pr-[max(0.75rem,env(safe-area-inset-right,0px))]',
                 'max-md:transition-[bottom] max-md:duration-150 max-md:ease-out'
               )
             : cn(
@@ -325,8 +327,11 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 'pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center',
                 'pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-[calc(1.75rem+env(safe-area-inset-bottom,0px))]',
                 // Mobile: fixed to the visual viewport so 100vh chrome can't hide it.
-                'max-md:fixed max-md:z-[45] max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]',
-                'max-md:px-3',
+                'max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[45]',
+                'max-md:w-full max-md:max-w-none',
+                'max-md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]',
+                'max-md:pl-[max(0.75rem,env(safe-area-inset-left,0px))]',
+                'max-md:pr-[max(0.75rem,env(safe-area-inset-right,0px))]',
                 'max-md:transition-[bottom] max-md:duration-150 max-md:ease-out'
               )
         )}
@@ -473,10 +478,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               )}
             </AnimatePresence>
 
-            {/* Single lightweight row ≈ 56–60px */}
+            {/* Single lightweight row ≈ 56–60px — wraps controls on narrow phones */}
             <div
               className={cn(
-                'flex w-full items-center gap-1 px-2.5',
+                'flex w-full min-w-0 items-center gap-0.5 px-2 max-md:gap-0 sm:gap-1 sm:px-2.5',
                 hasExtra ? 'min-h-[56px] py-2' : 'h-[56px]'
               )}
             >
@@ -515,17 +520,19 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 style={{ height: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT }}
  />
 
-              <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
+              <div className="flex shrink-0 items-center gap-0 max-md:gap-0 sm:gap-0.5 pr-0.5">
                 {agents && onSelectAgent && (
-                  <AgentSelector
-                    agents={agents}
-                    selectedAgent={deepResearchEnabled ? null : selectedAgent}
-                    onSelect={(id) => {
-                      if (id) enableDeepResearch(false);
-                      onSelectAgent(id);
-                    }}
-                    disabled={isLoading || deepResearchEnabled}
- />
+                  <div className="hidden min-[400px]:block">
+                    <AgentSelector
+                      agents={agents}
+                      selectedAgent={deepResearchEnabled ? null : selectedAgent}
+                      onSelect={(id) => {
+                        if (id) enableDeepResearch(false);
+                        onSelectAgent(id);
+                      }}
+                      disabled={isLoading || deepResearchEnabled}
+                    />
+                  </div>
                 )}
                 {onSelectModel && (
                   <ModelSelector
@@ -533,7 +540,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                     onChange={onSelectModel}
                     disabled={isLoading}
                     projectDefault={projectDefaultModel}
- />
+                  />
                 )}
 
                 <button

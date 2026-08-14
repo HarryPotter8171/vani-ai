@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { safeHref, safeUrl, markdownUrlTransform } from '@/lib/safeUrl';
+import {
+  safeHref,
+  safeUrl,
+  markdownUrlTransform,
+  isRenderableImageSrc,
+  stripHallucinatedImageMarkdown,
+} from '@/lib/safeUrl';
 import { sanitizeRichtextHtmlSafe } from '@/lib/richtextSanitize';
 
 describe('safeUrl', () => {
@@ -40,6 +46,48 @@ describe('safeHref / markdownUrlTransform', () => {
   it('urlTransform returns empty string for dangerous URLs', () => {
     expect(markdownUrlTransform('javascript:alert(1)')).toBe('');
     expect(markdownUrlTransform('https://ok.example')).toBe('https://ok.example');
+  });
+});
+
+describe('isRenderableImageSrc', () => {
+  it('allows http(s) and same-origin relative paths', () => {
+    expect(isRenderableImageSrc('https://cdn.example/a.png')).toBe(
+      'https://cdn.example/a.png'
+    );
+    expect(isRenderableImageSrc('/api/files/abc')).toBe('/api/files/abc');
+  });
+
+  it('rejects data URLs, raw base64, and nonsense', () => {
+    expect(
+      isRenderableImageSrc('data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==')
+    ).toBeUndefined();
+    expect(
+      isRenderableImageSrc(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+      )
+    ).toBeUndefined();
+    expect(isRenderableImageSrc('ARIENYwardrobe')).toBeUndefined();
+    expect(isRenderableImageSrc('mailto:x@y.com')).toBeUndefined();
+    expect(isRenderableImageSrc('')).toBeUndefined();
+  });
+});
+
+describe('stripHallucinatedImageMarkdown', () => {
+  it('removes base64 dumps and invalid markdown images; keeps http(s) images', () => {
+    const input = [
+      'Here is a wardrobe.',
+      '![Image 1: A wardrobe](data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==)',
+      '![ok](https://cdn.example/a.png)',
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'More text.',
+    ].join('\n');
+    const out = stripHallucinatedImageMarkdown(input);
+    expect(out).toContain('Here is a wardrobe.');
+    expect(out).toContain('More text.');
+    expect(out).toContain('![ok](https://cdn.example/a.png)');
+    expect(out).not.toMatch(/Image 1: A wardrobe/);
+    expect(out).not.toMatch(/data:image/i);
+    expect(out).not.toMatch(/iVBORw0KGgo/);
   });
 });
 

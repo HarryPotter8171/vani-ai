@@ -1,3 +1,4 @@
+import { toPublicErrorMessage } from "../utils/errors.js";
 import {
   AI_EDIT_ACTIONS,
   CanvasConflictError,
@@ -33,20 +34,20 @@ function resolveUser(req) {
 
 function handleError(res, err) {
   if (err instanceof CanvasValidationError) {
-    return res.status(400).json({ error: err.message, code: err.code });
+    return res.status(400).json({ error: toPublicErrorMessage(err), code: err.code });
   }
   if (err instanceof CanvasNotFoundError) {
-    return res.status(404).json({ error: err.message, code: err.code });
+    return res.status(404).json({ error: toPublicErrorMessage(err), code: err.code });
   }
   if (err instanceof CanvasConflictError) {
     return res.status(409).json({
-      error: err.message,
+      error: toPublicErrorMessage(err),
       code: err.code,
       current: err.current,
     });
   }
   console.error("[canvas]", err);
-  return res.status(500).json({ error: err.message || "Canvas request failed" });
+  return res.status(500).json({ error: toPublicErrorMessage(err, "Canvas request failed") });
 }
 
 export const list = async (req, res) => {

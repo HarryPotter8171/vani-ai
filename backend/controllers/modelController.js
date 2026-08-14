@@ -1,3 +1,4 @@
+import { toPublicErrorMessage } from "../utils/errors.js";
 import {
   providerRegistry,
   modelRouter,
@@ -90,6 +91,6 @@ export async function previewRoute(req, res) {
       costPreviewUsd: costPreview,
     });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Unable to preview route" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to preview route") });
   }
 }

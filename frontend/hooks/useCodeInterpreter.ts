@@ -20,6 +20,7 @@ import type {
   GeneratedFile,
   PlotArtifact,
 } from '@/lib/codeInterpreter';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 const DEFAULT_CODE = `# VANI Code Interpreter
 # pandas, numpy, matplotlib, openpyxl, reportlab are available.
@@ -82,6 +83,10 @@ export function useCodeInterpreter({
   }, [session]);
 
   const fail = useCallback((message: string, err?: unknown) => {
+    const friendly = getUserFriendlyError(err ?? message, {
+      feature: 'code',
+      fallback: message,
+    });
     if (
       err &&
       typeof err === 'object' &&
@@ -91,12 +96,12 @@ export function useCodeInterpreter({
       onGateDenialRef.current?.(
         (err as { denial: import('@/lib/billing/gateError').GateDenial }).denial
       );
-      setError(message);
-      if (!onGateDenialRef.current) onErrorRef.current?.(message);
+      setError(friendly);
+      if (!onGateDenialRef.current) onErrorRef.current?.(friendly);
       return;
     }
-    setError(message);
-    onErrorRef.current?.(message);
+    setError(friendly);
+    onErrorRef.current?.(friendly);
   }, []);
 
   useEffect(() => {
@@ -137,8 +142,7 @@ export function useCodeInterpreter({
       setError(null);
       return next;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to start session';
-      fail(message, err);
+      fail('Unable to start session', err);
       throw err;
     } finally {
       setIsStarting(false);
@@ -167,7 +171,12 @@ export function useCodeInterpreter({
           } else if (event.type === 'stderr' && event.data) {
             setStderr((prev) => prev + event.data);
           } else if (event.type === 'error' && event.error) {
-            setError(event.error);
+            setError(
+              getUserFriendlyError(event.error, {
+                feature: 'code',
+                fallback: 'Code execution is temporarily unavailable.',
+              })
+            );
           } else if (event.type === 'plot' && event.plot) {
             setPlots((prev) => [...prev, event.plot!]);
           } else if (event.type === 'file' && event.file) {
@@ -188,7 +197,14 @@ export function useCodeInterpreter({
         setLastResult(result);
         if (result.stdout) setStdout(result.stdout);
         if (result.stderr) setStderr(result.stderr);
-        if (result.error) setError(result.error);
+        if (result.error) {
+          setError(
+            getUserFriendlyError(result.error, {
+              feature: 'code',
+              fallback: 'Code execution is temporarily unavailable.',
+            })
+          );
+        }
         if (result.plots?.length) {
           setPlots((prev) => {
             const ids = new Set(prev.map((p) => p.id));
@@ -209,8 +225,7 @@ export function useCodeInterpreter({
       setPlots(refreshed.plots || []);
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return;
-      const message = err instanceof Error ? err.message : 'Execution failed';
-      fail(message, err);
+      fail('Execution failed', err);
     } finally {
       setIsRunning(false);
       abortRef.current = null;
@@ -228,7 +243,7 @@ export function useCodeInterpreter({
       const next = await interruptCodeSession(current.sessionId);
       setSession(next);
     } catch (err) {
-      fail(err instanceof Error ? err.message : 'Unable to interrupt', err);
+      fail('Unable to interrupt', err);
     } finally {
       setIsRunning(false);
     }
@@ -244,7 +259,7 @@ export function useCodeInterpreter({
       setError(null);
       setLastResult(null);
     } catch (err) {
-      fail(err instanceof Error ? err.message : 'Unable to restart kernel', err);
+      fail('Unable to restart kernel', err);
     }
   }, [ensureSession, fail]);
 
@@ -260,7 +275,7 @@ export function useCodeInterpreter({
         setPanelOpen(true);
         return uploaded;
       } catch (err) {
-        fail(err instanceof Error ? err.message : 'Upload failed', err);
+        fail('Upload failed', err);
         return null;
       } finally {
         setUploadProgress(null);
@@ -280,7 +295,7 @@ export function useCodeInterpreter({
         });
         return canvasId;
       } catch (err) {
-        fail(err instanceof Error ? err.message : 'Unable to publish to Canvas', err);
+        fail('Unable to publish to Canvas', err);
         return null;
       }
     },

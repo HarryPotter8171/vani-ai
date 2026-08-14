@@ -27,11 +27,15 @@ export class VoiceActivityDetector {
   private silenceStartedAt = 0;
   private loudFrames = 0;
   private stopped = false;
+  /** When true, levels still update but speech-start/end callbacks are suppressed. */
+  private suspended = false;
+  /** Ignore speech-start until this performance.now() timestamp (TTS echo hold-off). */
+  private ignoreUntil = 0;
   private noiseFloor = 0.004;
-  private readonly baseThreshold: number;
+  private baseThreshold: number;
   private readonly silenceMs: number;
   private readonly minSpeechMs: number;
-  private readonly startFrames: number;
+  private startFrames: number;
   private readonly onSpeechStart?: () => void;
   private readonly onSpeechEnd?: () => void;
   private readonly onLevel?: (level: number) => void;
@@ -49,6 +53,8 @@ export class VoiceActivityDetector {
   async start(stream: MediaStream) {
     this.stop();
     this.stopped = false;
+    this.suspended = false;
+    this.ignoreUntil = 0;
     this.loudFrames = 0;
     this.noiseFloor = 0.004;
     this.ctx = new AudioContext({ latencyHint: 'interactive' });
@@ -59,6 +65,41 @@ export class VoiceActivityDetector {
     this.analyser.smoothingTimeConstant = 0.55;
     this.source.connect(this.analyser);
     this.tick();
+  }
+
+  /**
+   * Pause speech detection (e.g. while TTS is playing). Levels still fire for UI.
+   * Resets in-progress speech so a mid-utterance suspend cannot fire on resume.
+   */
+  setSuspended(suspended: boolean) {
+    this.suspended = suspended;
+    if (suspended) {
+      this.loudFrames = 0;
+      this.speaking = false;
+      this.silenceStartedAt = 0;
+    }
+  }
+
+  /** Hold off speech-start for `ms` (speaker echo right after TTS begins). */
+  ignoreSpeechFor(ms: number) {
+    const hold = Math.max(0, Number(ms) || 0);
+    this.ignoreUntil = performance.now() + hold;
+    this.loudFrames = 0;
+    this.speaking = false;
+    this.silenceStartedAt = 0;
+  }
+
+  /** Raise/lower energy floor at runtime (barge-in vs listen). */
+  setThreshold(threshold: number) {
+    if (Number.isFinite(threshold) && threshold > 0) {
+      this.baseThreshold = threshold;
+    }
+  }
+
+  setStartFrames(frames: number) {
+    if (Number.isFinite(frames) && frames >= 1) {
+      this.startFrames = Math.floor(frames);
+    }
   }
 
   private effectiveThreshold() {
@@ -80,6 +121,16 @@ export class VoiceActivityDetector {
     this.onLevel?.(Math.min(1, rms * 4));
 
     const now = performance.now();
+    // Suspended / TTS hold-off: keep sampling noise floor, never fire speech callbacks.
+    if (this.suspended || now < this.ignoreUntil) {
+      if (!this.speaking && rms < this.effectiveThreshold()) {
+        this.noiseFloor = this.noiseFloor * 0.95 + rms * 0.05;
+      }
+      this.loudFrames = 0;
+      this.raf = requestAnimationFrame(this.tick);
+      return;
+    }
+
     const threshold = this.effectiveThreshold();
     const isLoud = rms >= threshold;
 
@@ -117,8 +168,14 @@ export class VoiceActivityDetector {
     return this.speaking;
   }
 
+  get isSuspended() {
+    return this.suspended;
+  }
+
   stop() {
     this.stopped = true;
+    this.suspended = false;
+    this.ignoreUntil = 0;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
     try {
@@ -223,35 +280,12 @@ export class WaveformSampler {
 
 /**
  * Preferred browser audio constraints for duplex voice.
- * echoCancellation + noiseSuppression + autoGainControl + Chrome DSP hints.
+ * Soft booleans — hard ideals / goog* flags break getUserMedia on some Android devices.
+ * Prefer `requestMicrophoneStream()` from `@/lib/voice/microphone` for acquisition.
  */
-export const VOICE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
-  echoCancellation: { ideal: true },
-  noiseSuppression: { ideal: true },
-  autoGainControl: { ideal: true },
-  channelCount: { ideal: 1 },
-  sampleRate: { ideal: 48000 },
-  // Chromium-specific DSP flags (ignored by other browsers).
-  ...({
-    googEchoCancellation: true,
-    googNoiseSuppression: true,
-    googAutoGainControl: true,
-    googHighpassFilter: true,
-    googTypingNoiseDetection: true,
-  } as MediaTrackConstraints),
-};
+export {
+  VOICE_AUDIO_CONSTRAINTS_SOFT as VOICE_AUDIO_CONSTRAINTS,
+  ensureEchoCancellation,
+  requestMicrophoneStream,
+} from '@/lib/voice/microphone';
 
-/** Apply / refresh AEC constraints on an existing mic track. */
-export async function ensureEchoCancellation(stream: MediaStream): Promise<void> {
-  const track = stream.getAudioTracks()[0];
-  if (!track) return;
-  try {
-    await track.applyConstraints({
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    });
-  } catch {
-    // Constraints already set at getUserMedia — safe to ignore.
-  }
-}

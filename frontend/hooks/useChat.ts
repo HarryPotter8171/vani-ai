@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/apiClient';
 import { fileContentUrl } from '@/lib/upload';
-import type { Message, MessageAttachment } from '@/lib/types';
+import type { Message, MessageAttachment, StreamPhase } from '@/lib/types';
 import type { TurnMeta, TurnUsage } from '@/lib/models';
 import {
   GateDenialError,
   parseGateDenial,
   type GateDenial,
 } from '@/lib/billing/gateError';
+import { phaseFromToolHint } from '@/lib/chat/streamPhase';
 
 interface StreamEvent {
   delta?: string;
@@ -112,8 +113,26 @@ export function useChat(options?: UseChatOptions) {
   const [chatId, setChatId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  /** Premium thinking labels — never expose tool/provider internals. */
+  const [streamPhase, setStreamPhase] = useState<StreamPhase | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatIdRef = useRef<string | null>(null);
+  const streamPhaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearStreamPhaseTimer = useCallback(() => {
+    if (streamPhaseTimerRef.current != null) {
+      clearTimeout(streamPhaseTimerRef.current);
+      streamPhaseTimerRef.current = null;
+    }
+  }, []);
+
+  const setPhase = useCallback(
+    (phase: StreamPhase | null) => {
+      clearStreamPhaseTimer();
+      setStreamPhase(phase);
+    },
+    [clearStreamPhaseTimer]
+  );
 
   // Bumped whenever the active thread changes from under a running stream
   // (loading a different chat, starting a new one, switching projects).
@@ -127,7 +146,9 @@ export function useChat(options?: UseChatOptions) {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setIsLoading(false);
-  }, []);
+    clearStreamPhaseTimer();
+    setStreamPhase(null);
+  }, [clearStreamPhaseTimer]);
 
   useEffect(() => {
     chatIdRef.current = chatId;
@@ -229,25 +250,68 @@ export function useChat(options?: UseChatOptions) {
     });
   }, []);
 
-  const finalizeLastMessage = useCallback((opts?: { interrupted?: boolean }) => {
+  const finalizeLastMessage = useCallback((opts?: { interrupted?: boolean; error?: boolean }) => {
     flushPendingDelta();
     setMessages((prev) => {
       const next = [...prev];
       const last = next[next.length - 1];
       if (last?.role !== 'assistant') return prev;
       // Stop before the first token: drop the empty placeholder bubble.
-      if (opts?.interrupted && !last.content?.trim()) {
+      if (opts?.interrupted && !last.content?.trim() && !opts?.error) {
         next.pop();
+        return next;
+      }
+      if (opts?.error) {
+        next[next.length - 1] = {
+          ...last,
+          isStreaming: false,
+          wasInterrupted: false,
+          status: 'error',
+          // Keep any partial tokens for context, but the UI shows the error card.
+        };
         return next;
       }
       next[next.length - 1] = {
         ...last,
         isStreaming: false,
         wasInterrupted: opts?.interrupted ? !!last.content?.trim() : false,
+        status: last.status === 'error' ? 'error' : 'complete',
       };
       return next;
     });
-  }, [flushPendingDelta]);
+    if (opts?.error) {
+      setPhase(null);
+      return;
+    }
+    if (opts?.interrupted) {
+      setPhase(null);
+      return;
+    }
+    setPhase('finished');
+    clearStreamPhaseTimer();
+    streamPhaseTimerRef.current = setTimeout(() => {
+      streamPhaseTimerRef.current = null;
+      setStreamPhase(null);
+    }, 600);
+  }, [flushPendingDelta, setPhase, clearStreamPhaseTimer]);
+
+  const markLastMessageFailed = useCallback(() => {
+    flushPendingDelta();
+    pendingDeltaRef.current = '';
+    setMessages((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last?.role !== 'assistant') return prev;
+      next[next.length - 1] = {
+        ...last,
+        isStreaming: false,
+        wasInterrupted: false,
+        status: 'error',
+      };
+      return next;
+    });
+    setPhase(null);
+  }, [flushPendingDelta, setPhase]);
 
   const handleSendMessage = useCallback(
     async (
@@ -313,6 +377,13 @@ export function useChat(options?: UseChatOptions) {
         setMessages([...updatedMessagesList, placeholderMessage]);
       }
       setIsLoading(true);
+      setPhase(
+        continueFromId
+          ? 'writing'
+          : preferWebSearchRef?.current
+            ? 'searching'
+            : 'thinking'
+      );
 
       const myGeneration = ++generationRef.current;
       const isCurrentGeneration = () => generationRef.current === myGeneration;
@@ -365,7 +436,18 @@ export function useChat(options?: UseChatOptions) {
           signal: controller.signal,
         });
 
+        // Voice barge-in / Stop may abort mid-flight. Exit quietly — never
+        // surface AbortError or a fake "Backend response error" card.
+        if (controller.signal.aborted) {
+          aborted = true;
+          return;
+        }
+
         if (!response.ok || !response.body) {
+          if (controller.signal.aborted) {
+            aborted = true;
+            return;
+          }
           const denial = await parseGateDenial(response);
           if (denial) {
             throw new GateDenialError(denial);
@@ -376,13 +458,31 @@ export function useChat(options?: UseChatOptions) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let streamFailed = false;
 
         while (true) {
           // The user navigated away (new chat / loaded a different
           // conversation) — stop applying this stream's output entirely.
-          if (!isCurrentGeneration()) break;
+          if (!isCurrentGeneration() || streamFailed || controller.signal.aborted) {
+            if (controller.signal.aborted) aborted = true;
+            break;
+          }
 
-          const { value, done } = await reader.read();
+          let value: Uint8Array | undefined;
+          let done = false;
+          try {
+            ({ value, done } = await reader.read());
+          } catch (readErr) {
+            if (
+              controller.signal.aborted ||
+              (readErr as Error)?.name === 'AbortError' ||
+              /aborted/i.test(String((readErr as Error)?.message || ''))
+            ) {
+              aborted = true;
+              break;
+            }
+            throw readErr;
+          }
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
@@ -390,7 +490,7 @@ export function useChat(options?: UseChatOptions) {
           buffer = frames.pop() ?? '';
 
           for (const frame of frames) {
-            if (!isCurrentGeneration()) break;
+            if (!isCurrentGeneration() || streamFailed) break;
 
             const line = frame.trim();
             if (!line.startsWith('data:')) continue;
@@ -441,24 +541,17 @@ export function useChat(options?: UseChatOptions) {
               } else {
                 enqueueDelta(event.delta);
               }
-            } else if (event.tool?.status === 'start' && event.tool.displayName) {
-              // Temporary progress only — replace:true deltas overwrite this.
-              // Skip while continuing — keep the partial reply visible.
-              if (continueFromId) continue;
-              setMessages((prev) => {
-                const next = [...prev];
-                const last = next[next.length - 1];
-                if (last?.role !== 'assistant') return prev;
-                if (last.content?.trim()) return prev;
-                const label = String(event.tool?.displayName || '').trim();
-                const toolContent = /\.\.\.$/.test(label) ? label : `${label}...`;
-                next[next.length - 1] = {
-                  ...last,
-                  content: toolContent,
-                  isStreaming: true,
-                };
-                return next;
-              });
+              setPhase('writing');
+            } else if (event.tool?.status === 'start') {
+              // Keep the placeholder empty — TypingIndicator shows the phase.
+              // Never write tool/provider names into the message bubble.
+              if (!continueFromId) {
+                setPhase(
+                  phaseFromToolHint(
+                    event.tool.displayName || event.tool.name
+                  )
+                );
+              }
             } else if (event.image?.dataBase64 || event.image?.fileId) {
               const mimeType = event.image.mimeType || 'image/png';
               const fileId = event.image.fileId || undefined;
@@ -497,8 +590,14 @@ export function useChat(options?: UseChatOptions) {
                 };
                 return next;
               });
+              setPhase('writing');
             } else if (event.error) {
-              appendToLastMessage(`\n\n_${event.error}_`);
+              // Surface a structured failure card — never raw server text.
+              console.error('[chat:stream]', event.error);
+              markLastMessageFailed();
+              skipFinalize = true;
+              streamFailed = true;
+              break;
             } else if (event.done && event.chatId) {
               setChatId(event.chatId);
               chatIdRef.current = event.chatId;
@@ -516,10 +615,24 @@ export function useChat(options?: UseChatOptions) {
             }
           }
         }
+        if (streamFailed) {
+          try {
+            await reader.cancel();
+          } catch {
+            /* ignore */
+          }
+        }
       } catch (error) {
-        if ((error as Error).name === 'AbortError') {
-          // User pressed Stop, or navigated to a different chat — keep
-          // whatever streamed so far on the conversation it belongs to.
+        const errName = (error as Error)?.name || '';
+        const errMsg = String((error as Error)?.message || error || '');
+        const isAbort =
+          controller.signal.aborted ||
+          errName === 'AbortError' ||
+          /aborted|AbortError/i.test(errMsg);
+
+        if (isAbort) {
+          // Stop button, navigation, or voice barge-in — keep partial text,
+          // never mark the turn failed / never rethrow into React.
           aborted = true;
         } else if (error instanceof GateDenialError) {
           if (isCurrentGeneration()) {
@@ -545,18 +658,20 @@ export function useChat(options?: UseChatOptions) {
             });
             onGateDenial?.(error.denial);
             skipFinalize = true;
+            setPhase(null);
           }
         } else if (isCurrentGeneration()) {
           console.error('Message error:', error);
-          appendToLastMessage(
-            'Backend se connect nahi ho pa raha hai. Please check if your server is running on port 5001.'
-          );
+          markLastMessageFailed();
+          skipFinalize = true;
         }
       } finally {
         if (isCurrentGeneration()) {
           setIsLoading(false);
           if (!skipFinalize) {
             finalizeLastMessage({ interrupted: aborted });
+          } else if (aborted) {
+            setPhase(null);
           }
           abortControllerRef.current = null;
         }
@@ -571,8 +686,10 @@ export function useChat(options?: UseChatOptions) {
       replaceLastMessageContent,
       enqueueDelta,
       finalizeLastMessage,
+      markLastMessageFailed,
       onFirstMessagePersisted,
       onGateDenial,
+      setPhase,
     ]
   );
 
@@ -596,6 +713,36 @@ export function useChat(options?: UseChatOptions) {
     [messages, isLoading, handleSendMessage]
   );
 
+  /** Retry a failed assistant turn (same as regenerate). */
+  const retryFailedMessage = useCallback(
+    async (assistantMessageId: string) => {
+      await regenerateMessage(assistantMessageId);
+    },
+    [regenerateMessage]
+  );
+
+  /**
+   * Edit a user prompt and resend from that turn — truncates later messages.
+   */
+  const editAndResend = useCallback(
+    async (userMessageId: string, newContent: string) => {
+      if (isLoading) return;
+      const trimmed = newContent.trim();
+      if (!trimmed) return;
+      const idx = messages.findIndex((m) => m.id === userMessageId);
+      if (idx < 0) return;
+      const target = messages[idx];
+      if (target.role !== 'user') return;
+
+      const history: Message[] = messages.slice(0, idx).concat({
+        ...target,
+        content: trimmed,
+      });
+      await handleSendMessage('', undefined, { historyOverride: history });
+    },
+    [messages, isLoading, handleSendMessage]
+  );
+
   const continueGenerating = useCallback(
     async (assistantMessageId: string) => {
       if (isLoading) return;
@@ -610,6 +757,8 @@ export function useChat(options?: UseChatOptions) {
 
   const clearMessages = useCallback(() => {
     invalidateActiveStream();
+    clearStreamPhaseTimer();
+    setStreamPhase(null);
     setMessages((prev) => {
       prev.forEach((m) => {
         m.attachments?.forEach((a) => {
@@ -620,7 +769,7 @@ export function useChat(options?: UseChatOptions) {
     });
     setChatId(null);
     chatIdRef.current = null;
-  }, [invalidateActiveStream]);
+  }, [invalidateActiveStream, clearStreamPhaseTimer]);
 
   // GET /api/chat/:id — fetches the full, persisted message history for a
   // past conversation and swaps it in as the active thread. Any in-flight
@@ -700,8 +849,11 @@ export function useChat(options?: UseChatOptions) {
     chatId,
     isLoading,
     isChatLoading,
+    streamPhase,
     handleSendMessage,
     regenerateMessage,
+    retryFailedMessage,
+    editAndResend,
     continueGenerating,
     stopGenerating,
     appendToLastMessage,

@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils';
 import MarkdownContent from '@/components/chat/MarkdownContent';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { fetchSharedChat, type SharedChat, type SharedMessage } from '@/lib/share';
+import { toUserFacingError } from '@/lib/userFacingError';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 export default function SharedChatPage({ params }: { params: Promise<{ shareId: string }> }) {
   const { shareId } = use(params);
@@ -26,7 +28,8 @@ function SharedChatBody({ shareId }: { shareId: string }) {
         setChat(data);
       })
       .catch((err) => {
-        setError((err as Error).message || 'Unable to load this conversation.');
+        console.error('[share]', err);
+        setError(toUserFacingError(err, "Couldn't load this conversation."));
       })
       .finally(() => {
         setIsLoading(false);
@@ -42,7 +45,10 @@ function SharedChatBody({ shareId }: { shareId: string }) {
         if (!cancelled) setChat(data);
       })
       .catch((err) => {
-        if (!cancelled) setError((err as Error).message || 'Unable to load this conversation.');
+        if (!cancelled) {
+          console.error('[share]', err);
+          setError(toUserFacingError(err, "Couldn't load this conversation."));
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -187,11 +193,11 @@ function SharedMessageBubble({ message }: { message: SharedMessage }) {
 
 function SkeletonState() {
   return (
-    <div className="space-y-7">
+    <div className="space-y-7" aria-busy="true" aria-label="Loading shared conversation">
       {[0, 1, 2].map((i) => (
         <div key={i} className="space-y-2">
-          <div className="h-2.5 w-16 animate-pulse rounded-full bg-surface-hover" />
-          <div className="h-16 w-full animate-pulse rounded-[20px] bg-black/[0.04] dark:bg-white/[0.05]" />
+          <Skeleton className="h-2.5 w-16" rounded="full" />
+          <Skeleton className="h-16 w-full" rounded="lg" />
         </div>
       ))}
     </div>

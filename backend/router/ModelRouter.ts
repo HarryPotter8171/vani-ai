@@ -302,7 +302,13 @@ export class ModelRouter {
           if (event.type === "error") {
             lastError = event.error;
             failed = Boolean(event.retryable) || i < chain.length - 1;
-            if (!failed) yield event;
+            if (!failed) {
+              yield {
+                type: "error",
+                error: "We couldn't generate a response. Please try again.",
+                retryable: false,
+              };
+            }
             break;
           }
           if (event.type === "usage") {
@@ -344,7 +350,11 @@ export class ModelRouter {
       return;
     }
 
-    yield { type: "error", error: lastError, retryable: false };
+    yield {
+      type: "error",
+      error: "We couldn't generate a response. Please try again.",
+      retryable: false,
+    };
   }
 }
 

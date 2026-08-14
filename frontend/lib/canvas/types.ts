@@ -107,6 +107,7 @@ export function isPreviewableCanvasType(type: CanvasType): boolean {
   return type === 'markdown' || type === 'html' || type === 'react' || type === 'mermaid' || type === 'richtext';
 }
 
+/** Desktop-only side-by-side edit+preview. Never used on mobile. */
 export function supportsCanvasSplit(type: CanvasType): boolean {
   return isPreviewableCanvasType(type);
 }

@@ -109,4 +109,38 @@ export function SkeletonCard({ className }: { className?: string }) {
   );
 }
 
+/** Compact list-row skeleton for files, memories, invoices, settings. */
+export function SkeletonList({
+  rows = 5,
+  className,
+}: {
+  rows?: number;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn('flex w-full flex-col gap-2', className)}
+      aria-busy="true"
+      aria-label="Loading"
+    >
+      {Array.from({ length: rows }).map((_, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-3 rounded-[14px] px-2.5 py-2.5"
+          aria-hidden
+        >
+          <Skeleton rounded="lg" className="h-9 w-9 shrink-0" />
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <Skeleton
+              rounded="sm"
+              className={cn('h-3', i % 2 === 0 ? 'w-[72%]' : 'w-[58%]')}
+            />
+            <Skeleton rounded="sm" className="h-2.5 w-[38%]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default Skeleton;

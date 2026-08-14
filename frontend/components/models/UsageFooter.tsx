@@ -28,7 +28,7 @@ export default function UsageFooter({
         : `${(usage.latencyMs / 1000).toFixed(1)} s`
       : null;
 
-  if (!modelLabel && !latency && !meta?.fallback) return null;
+  if (!modelLabel && !latency) return null;
 
   const parts: string[] = [];
   if (modelLabel) parts.push(modelLabel);
@@ -39,12 +39,7 @@ export default function UsageFooter({
       className="mt-2 flex flex-wrap items-center gap-x-1.5 text-caption font-medium tracking-[-0.01em] text-text-tertiary/85"
       data-testid="usage-footer"
     >
-      {parts.length > 0 ? <span>{parts.join(' · ')}</span> : null}
-      {meta?.fallback ? (
-        <span className="text-amber-600 dark:text-amber-400">
-          {parts.length ? '· fallback' : 'fallback'}
-        </span>
-      ) : null}
+      <span>{parts.join(' · ')}</span>
     </div>
   );
 }

@@ -93,8 +93,8 @@ function ChatHistorySection({
           title={query.trim() ? 'No matches' : 'No conversations yet'}
           description={
             query.trim()
-              ? `Nothing matches “${query.trim()}”.`
-              : 'Start a new chat to see it here.'
+              ? `Nothing matches “${query.trim()}”. Try a different search.`
+              : 'Your chats will show up here. Start one whenever you’re ready.'
           }
  />
       )}

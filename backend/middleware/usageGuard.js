@@ -16,6 +16,7 @@
 import { userIdFromReq } from "./auth.js";
 import { featureGate } from "../billing/FeatureGate.ts";
 import { isFeatureKey } from "../billing/featureMatrix.ts";
+import { toPublicErrorMessage } from "../utils/errors.js";
 
 /** Structured denial payload — clients show remaining / reset / upgrade CTA. */
 export function sendGateDenial(res, denial) {
@@ -68,7 +69,7 @@ export async function loadEntitlements(req, res, next) {
   } catch (err) {
     console.error("[usage-guard]", err);
     return res.status(500).json({
-      error: err.message || "Unable to resolve plan entitlements",
+      error: toPublicErrorMessage(err, "Unable to resolve plan entitlements"),
     });
   }
 }
@@ -99,7 +100,7 @@ export function usageGuard(feature, quantity = 1) {
       console.error("[usage-guard]", err);
       // Never crash the request with an unhandled throw — structured 500.
       return res.status(500).json({
-        error: err.message || "Usage check failed",
+        error: toPublicErrorMessage(err, "Usage check failed"),
         code: "USAGE_GUARD_ERROR",
       });
     }
@@ -124,7 +125,7 @@ export function usageGuardFeature(feature) {
     } catch (err) {
       console.error("[usage-guard]", err);
       return res.status(500).json({
-        error: err.message || "Feature check failed",
+        error: toPublicErrorMessage(err, "Feature check failed"),
         code: "USAGE_GUARD_ERROR",
       });
     }
@@ -149,7 +150,7 @@ export function usageGuardQuota(metric, quantity = 1) {
     } catch (err) {
       console.error("[usage-guard]", err);
       return res.status(500).json({
-        error: err.message || "Quota check failed",
+        error: toPublicErrorMessage(err, "Quota check failed"),
         code: "USAGE_GUARD_ERROR",
       });
     }
@@ -194,7 +195,7 @@ export function usageGuardPlan(minPlanId) {
     } catch (err) {
       console.error("[usage-guard]", err);
       return res.status(500).json({
-        error: err.message || "Plan check failed",
+        error: toPublicErrorMessage(err, "Plan check failed"),
         code: "USAGE_GUARD_ERROR",
       });
     }

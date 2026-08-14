@@ -1,18 +1,29 @@
 'use client';
 
-import React, { memo, useMemo, useEffect, useState, useCallback, useDeferredValue } from 'react';
-import { FileText, FileSpreadsheet, FileArchive, Brain } from 'lucide-react';
+import React, {
+  memo,
+  useMemo,
+  useEffect,
+  useState,
+  useCallback,
+  useDeferredValue,
+  useRef,
+} from 'react';
+import { FileText, FileSpreadsheet, FileArchive, Brain, Pencil, Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ArtifactCard from '@/components/artifacts/ArtifactCard';
 import AttachmentLightbox from '@/components/chat/AttachmentLightbox';
 import MessageActions from '@/components/chat/MessageActions';
 import MessageActionSheet from '@/components/chat/MessageActionSheet';
+import MessageErrorCard from '@/components/chat/MessageErrorCard';
 import MarkdownContent from '@/components/chat/MarkdownContent';
 import { extractArtifacts, type Artifact } from '@/lib/artifacts';
 import { fileContentUrl } from '@/lib/upload';
 import type {
   MessageAttachment,
+  MessageFeedback,
   MessageMeta,
+  MessageStatus,
   MessageUsage,
   PendingAttachment,
 } from '@/lib/types';
@@ -28,6 +39,9 @@ export interface MessageProps {
   content: string;
   isStreaming?: boolean;
   wasInterrupted?: boolean;
+  status?: MessageStatus;
+  feedback?: MessageFeedback | null;
+  pinned?: boolean;
   attachments?: MessageAttachment[];
   meta?: MessageMeta;
   usage?: MessageUsage;
@@ -38,6 +52,23 @@ export interface MessageProps {
   onForgetMemory?: (content: string) => void;
   onRegenerate?: (messageId: string) => void;
   onContinue?: (messageId: string) => void;
+  onRetry?: (messageId: string) => void;
+  /** Edit & resend a user prompt (or jump to edit the preceding user turn). */
+  onEditPrompt?: (messageId: string) => void;
+  onEditAndResend?: (messageId: string, newContent: string) => void;
+  onFeedback?: (messageId: string, value: MessageFeedback | null) => void;
+  onOpenInCanvas?: (messageId: string, content: string) => void;
+  onShareMessage?: (messageId: string, content: string) => void;
+  onPinMessage?: (messageId: string) => void;
+  onSaveResponse?: (messageId: string, content: string) => void;
+  onExportMarkdown?: (messageId: string, content: string) => void;
+  onExportPdf?: (messageId: string, content: string) => void;
+  onDeleteResponse?: (messageId: string) => void;
+  /** Latest assistant turn — keep action toolbar visible on desktop. */
+  isLatestAssistant?: boolean;
+  /** Imperatively open edit mode (e.g. Edit Prompt from a failed assistant turn). */
+  forceEditing?: boolean;
+  onForceEditingConsumed?: () => void;
   ttsState?: TtsState;
   ttsParagraphIndex?: number;
   onReadAloud?: (messageId: string, content: string) => void;
@@ -94,7 +125,8 @@ function ImageThumb({
         decoding="async"
         className={cn(
           'img-fade-in block h-auto w-auto max-w-full object-contain',
-          'max-h-[420px] max-w-[min(100%,480px)]'
+          'max-h-[min(420px,55vh)] max-w-[min(100%,480px)]',
+          'max-md:max-h-[min(280px,45vh)] max-md:max-w-full'
         )}
       />
     </button>
@@ -169,6 +201,9 @@ function MessageComponent({
   content,
   isStreaming,
   wasInterrupted,
+  status,
+  feedback,
+  pinned,
   attachments,
   meta,
   usage,
@@ -178,6 +213,20 @@ function MessageComponent({
   onForgetMemory,
   onRegenerate,
   onContinue,
+  onRetry,
+  onEditPrompt,
+  onEditAndResend,
+  onFeedback,
+  onOpenInCanvas,
+  onShareMessage,
+  onPinMessage,
+  onSaveResponse,
+  onExportMarkdown,
+  onExportPdf,
+  onDeleteResponse,
+  isLatestAssistant: _isLatestAssistant,
+  forceEditing,
+  onForceEditingConsumed,
   ttsState = 'idle',
   ttsParagraphIndex = -1,
   onReadAloud,
@@ -185,7 +234,9 @@ function MessageComponent({
   onStopAloud,
   regenerateDisabled,
 }: MessageProps) {
+  void _isLatestAssistant;
   const isUser = role === 'user';
+  const isFailed = !isUser && status === 'error' && !isStreaming;
   const hasAttachments = !!attachments?.length;
   const imageAttachments =
     attachments?.filter((a) => a.kind === 'image' && resolvePreviewUrl(a)) ?? [];
@@ -195,6 +246,9 @@ function MessageComponent({
     hasAttachments && imageAttachments.length > 0 && !content?.trim() && nonImageAttachments.length === 0;
   const canForget = isUser && !!content?.trim() && !!onForgetMemory && !isStreaming;
   const [lightboxAttachment, setLightboxAttachment] = useState<PendingAttachment | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(content);
+  const editRef = useRef<HTMLTextAreaElement>(null);
 
   const deferredContent = useDeferredValue(content);
   const renderContent = isStreaming ? deferredContent : content;
@@ -205,23 +259,55 @@ function MessageComponent({
 
   const { segments, artifacts } = useMemo(
     () =>
-      isUser
+      isUser || isFailed
         ? { segments: [], artifacts: [] }
         : extractArtifacts(renderContent, id, !!isStreaming),
-    [isUser, renderContent, id, isStreaming]
+    [isUser, isFailed, renderContent, id, isStreaming]
   );
 
   useEffect(() => {
-    if (!isUser) onArtifactsDetected?.(id, artifacts);
-  }, [isUser, id, artifacts, onArtifactsDetected]);
+    if (!isUser && !isFailed) onArtifactsDetected?.(id, artifacts);
+  }, [isUser, isFailed, id, artifacts, onArtifactsDetected]);
 
-  const showActions = !isUser && !isStreaming && !!content?.trim();
-  const showMeta = !isUser && !isStreaming && (!!usage || !!meta);
+  const showActions = !isUser && !isStreaming && !isFailed && !!content?.trim();
+  const showMeta = !isUser && !isStreaming && !isFailed && (!!usage || !!meta);
   const canContinue =
-    !!wasInterrupted && !!onContinue && !isStreaming && !!content?.trim();
+    !!wasInterrupted && !!onContinue && !isStreaming && !isFailed && !!content?.trim();
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
   const isDesktop = useIsDesktop();
-  const canLongPress = !isDesktop && !isStreaming && !!content?.trim();
+  // Long-press sheet is user-bubble only; assistant actions live in the always-on toolbar.
+  const canLongPress =
+    isUser && !isDesktop && !isStreaming && (!!content?.trim() || isFailed);
+
+  const startEdit = useCallback(() => {
+    setDraft(content);
+    setEditing(true);
+    window.setTimeout(() => editRef.current?.focus(), 30);
+  }, [content]);
+
+  useEffect(() => {
+    if (!forceEditing || !isUser) return;
+    startEdit();
+    onForceEditingConsumed?.();
+  }, [forceEditing, isUser, startEdit, onForceEditingConsumed]);
+
+  const handleEditPromptAction = useCallback(() => {
+    if (isUser && onEditAndResend) {
+      startEdit();
+      return;
+    }
+    onEditPrompt?.(id);
+  }, [isUser, onEditAndResend, startEdit, onEditPrompt, id]);
+
+  const commitEdit = useCallback(() => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === content.trim()) {
+      setEditing(false);
+      return;
+    }
+    onEditAndResend?.(id, trimmed);
+    setEditing(false);
+  }, [draft, content, onEditAndResend, id]);
 
   const openActionSheet = useCallback(() => {
     if (!canLongPress) return;
@@ -229,27 +315,27 @@ function MessageComponent({
   }, [canLongPress]);
 
   const longPress = useLongPress({
-    disabled: !canLongPress,
+    disabled: !canLongPress || editing,
     onLongPress: openActionSheet,
   });
 
-  const longPressHandlers = canLongPress ? longPress : {};
+  const longPressHandlers = canLongPress && !editing ? longPress : {};
 
   return (
     <>
       <div
         className={cn(
           'flex w-full',
-          /* User → Assistant 32px · Assistant → User 24px · tighter on mobile */
+          /* User → Assistant spacing · tighter on mobile */
           isUser
-            ? 'justify-end mb-6 max-md:mb-5 md:mb-8'
-            : 'justify-start mb-5 max-md:mb-4 md:mb-6',
+            ? 'justify-end mb-5 max-md:mb-4 md:mb-7'
+            : 'justify-start mb-4 max-md:mb-3.5 md:mb-5',
           !isStreaming && (isUser ? 'msg-enter-user' : 'msg-enter')
         )}
       >
         {isUser ? (
           <div
-            className="group/user relative flex w-fit max-w-[85%] min-w-0 flex-col items-end gap-2 md:max-w-[65%]"
+            className="group/user relative flex w-fit max-w-[min(88%,100%)] min-w-0 flex-col items-end gap-2 md:max-w-[70%]"
             {...longPressHandlers}
           >
             {imageAttachments.length > 0 && (
@@ -264,62 +350,132 @@ function MessageComponent({
               </div>
             )}
 
-            {(content || nonImageAttachments.length > 0) && (
-              <div
-                className={cn(
-                  'relative box-border flex w-fit max-w-full min-w-0 flex-col justify-center gap-2',
-                  /* ChatGPT/Gemini-style bubble: soft corner toward the avatar side */
-                  'rounded-[22px] rounded-br-[8px] px-4 py-3',
-                  'max-md:px-[15px] max-md:py-3',
-                  'md:rounded-[20px] md:rounded-br-[20px] md:py-3.5',
-                  'bg-accent text-body font-normal leading-[1.55] tracking-[-0.015em] text-text-on-accent',
-                  'max-md:text-chat max-md:leading-[1.5]',
-                  'shadow-[0_1px_2px_rgba(0,0,0,0.04)]',
-                  'break-words [overflow-wrap:anywhere] whitespace-pre-wrap',
-                  'select-text touch-manipulation',
-                  canLongPress && 'max-md:active:opacity-[0.92]'
-                )}
-              >
-                {nonImageAttachments.length > 0 && (
-                  <div className="flex w-fit max-w-full flex-wrap gap-1.5">
-                    {nonImageAttachments.map((att) => (
-                      <UserAttachmentChip
-                        key={att.id}
-                        attachment={att}
-                        onOpen={openAttachment}
-                      />
-                    ))}
-                  </div>
-                )}
-                {content ? (
-                  <div className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] whitespace-pre-wrap">
-                    {content}
-                  </div>
-                ) : null}
+            {editing ? (
+              <div className="flex w-full min-w-[min(100%,280px)] flex-col gap-2">
+                <textarea
+                  ref={editRef}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={Math.min(8, Math.max(2, draft.split('\n').length))}
+                  className={cn(
+                    'w-full resize-none rounded-[18px] px-4 py-3',
+                    'bg-surface-secondary text-body text-foreground',
+                    'ring-1 ring-accent/40 outline-none',
+                    'leading-[1.55] tracking-[-0.015em]',
+                    'max-md:text-chat'
+                  )}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setEditing(false);
+                      setDraft(content);
+                    }
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      commitEdit();
+                    }
+                  }}
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditing(false);
+                      setDraft(content);
+                    }}
+                    className="inline-flex h-8 items-center gap-1 rounded-full px-3 text-sm text-text-secondary hover:bg-surface-hover"
+                  >
+                    <X size={14} />
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={regenerateDisabled || !draft.trim()}
+                    onClick={commitEdit}
+                    className="inline-flex h-8 items-center gap-1 rounded-full bg-accent px-3.5 text-sm font-medium text-text-on-accent disabled:opacity-40"
+                  >
+                    <Check size={14} />
+                    Save &amp; submit
+                  </button>
+                </div>
               </div>
+            ) : (
+              (content || nonImageAttachments.length > 0) && (
+                <div
+                  className={cn(
+                    'relative box-border flex w-fit max-w-full min-w-0 flex-col justify-center gap-2',
+                    'rounded-[22px] rounded-br-[8px] px-4 py-3',
+                    'max-md:px-[15px] max-md:py-2.5',
+                    'md:rounded-[20px] md:rounded-br-[20px] md:py-3.5',
+                    'bg-accent text-body font-normal leading-[1.55] tracking-[-0.015em] text-text-on-accent',
+                    'max-md:text-chat max-md:leading-[1.5]',
+                    'shadow-[0_1px_2px_rgba(0,0,0,0.04)]',
+                    'break-words [overflow-wrap:anywhere] whitespace-pre-wrap',
+                    'select-text touch-manipulation',
+                    canLongPress && 'max-md:active:opacity-[0.92]'
+                  )}
+                >
+                  {nonImageAttachments.length > 0 && (
+                    <div className="flex w-fit max-w-full flex-wrap gap-1.5">
+                      {nonImageAttachments.map((att) => (
+                        <UserAttachmentChip
+                          key={att.id}
+                          attachment={att}
+                          onOpen={openAttachment}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {content ? (
+                    <div className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] whitespace-pre-wrap">
+                      {content}
+                    </div>
+                  ) : null}
+                </div>
+              )
             )}
 
-            {canForget && (
-              <button
-                type="button"
-                onClick={() => onForgetMemory?.(content)}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
-                  'text-micro font-medium tracking-[-0.01em]',
-                  'text-text-tertiary hover:bg-surface-hover hover:text-foreground',
-                  /* Always discoverable on touch; hover-reveal on desktop */
-                  'max-md:opacity-70 md:opacity-0',
-                  'transition-opacity duration-normal md:group-hover/user:opacity-100 focus-visible:opacity-100'
-                )}
-              >
-                <Brain size={11} strokeWidth={1.75} />
-                Forget this
-              </button>
-            )}
+            {!editing && (canForget || onEditAndResend) ? (
+              <div className="flex items-center gap-1">
+                {onEditAndResend ? (
+                  <button
+                    type="button"
+                    onClick={startEdit}
+                    disabled={regenerateDisabled}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
+                      'text-micro font-medium tracking-[-0.01em]',
+                      'text-text-tertiary hover:bg-surface-hover hover:text-foreground',
+                      'max-md:opacity-70 md:opacity-0',
+                      'transition-opacity duration-normal md:group-hover/user:opacity-100 focus-visible:opacity-100',
+                      'disabled:pointer-events-none disabled:opacity-30'
+                    )}
+                  >
+                    <Pencil size={11} strokeWidth={1.75} />
+                    Edit
+                  </button>
+                ) : null}
+                {canForget ? (
+                  <button
+                    type="button"
+                    onClick={() => onForgetMemory?.(content)}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
+                      'text-micro font-medium tracking-[-0.01em]',
+                      'text-text-tertiary hover:bg-surface-hover hover:text-foreground',
+                      'max-md:opacity-70 md:opacity-0',
+                      'transition-opacity duration-normal md:group-hover/user:opacity-100 focus-visible:opacity-100'
+                    )}
+                  >
+                    <Brain size={11} strokeWidth={1.75} />
+                    Forget this
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div
-            className="group/assistant flex w-full min-w-0 max-w-full items-start gap-2.5 overflow-visible max-md:gap-2.5 md:gap-3"
+            className="group/assistant flex w-full min-w-0 max-w-full items-start gap-2.5 overflow-visible max-md:gap-2 md:gap-3"
             {...longPressHandlers}
           >
             <div className="max-md:mt-1">
@@ -327,147 +483,185 @@ function MessageComponent({
             </div>
 
             <div className="flex min-w-0 flex-1 flex-col items-stretch">
-              {imageAttachments.length > 0 && (
-                <div className="mb-3 flex w-fit max-w-full flex-col gap-2">
-                  {imageAttachments.map((att) => {
-                    const previewUrl = resolvePreviewUrl(att)!;
-                    return (
-                      <ImageThumb
-                        key={att.id}
-                        src={previewUrl}
-                        alt={att.name}
-                        onOpen={() => openAttachment(att)}
-                      />
-                    );
-                  })}
-                </div>
-              )}
-
-              {(content || isStreaming || nonImageAttachments.length > 0) && !hasOnlyImages ? (
+              {isFailed ? (
                 <div
                   className={cn(
-                    'min-w-0 w-full max-w-full overflow-visible',
-                    'text-foreground',
-                    /* Soft surface bubble on mobile — ChatGPT/Gemini rhythm */
+                    'min-w-0 w-full max-w-full',
                     'max-md:rounded-[20px] max-md:rounded-tl-[8px]',
                     'max-md:bg-surface-secondary/80 max-md:px-3.5 max-md:py-3',
-                    'max-md:ring-1 max-md:ring-border-subtle/60',
-                    isStreaming && content && 'streaming-text streaming-cursor',
-                    'select-text touch-manipulation'
+                    'max-md:ring-1 max-md:ring-border-subtle/60'
                   )}
                 >
-                  {nonImageAttachments.length > 0 ? (
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      {nonImageAttachments.map((att) => (
-                        <span
-                          key={att.id}
-                          className="rounded-full bg-surface-hover px-2.5 py-1 text-caption font-medium text-text-secondary"
-                        >
-                          {att.name}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="prose-vani max-md:text-chat max-md:leading-[1.65]">
-                    {segments.length > 0 ? (
-                      segments.map((segment, i) =>
-                        segment.type === 'artifact' ? (
-                          <ArtifactCard
-                            key={segment.artifact.id}
-                            artifact={segment.artifact}
-                            isActive={segment.artifact.id === activeArtifactId}
-                            onOpen={onOpenArtifact ?? (() => {})}
-                          />
-                        ) : (
-                          <MarkdownContent
-                            key={`${id}-seg-${i}`}
-                            content={segment.value}
-                          />
-                        )
-                      )
-                    ) : (
-                      <MarkdownContent
-                        content={renderContent || (isStreaming ? ' ' : '')}
-                        highlightParagraph={
-                          ttsState !== 'idle' ? ttsParagraphIndex : -1
-                        }
-                      />
-                    )}
-                  </div>
-                </div>
-              ) : null}
-
-              {showMeta ? <UsageFooter usage={usage} meta={meta} /> : null}
-
-              {/* Desktop: inline actions. Mobile: long-press action sheet + Continue chip. */}
-              {showActions ? (
-                <div className="max-md:hidden">
-                  <MessageActions
-                    content={content}
+                  <MessageErrorCard
                     disabled={regenerateDisabled}
-                    ttsState={ttsState}
-                    onRegenerate={
-                      onRegenerate ? () => onRegenerate(id) : undefined
-                    }
-                    onContinue={
-                      canContinue ? () => onContinue?.(id) : undefined
-                    }
-                    onReadAloud={
-                      onReadAloud
-                        ? () => onReadAloud(id, content)
+                    partialContent={content}
+                    onRetry={
+                      onRetry || onRegenerate
+                        ? () => (onRetry || onRegenerate)?.(id)
                         : undefined
                     }
-                    onPauseAloud={onPauseAloud}
-                    onStopAloud={onStopAloud}
+                    onEditPrompt={
+                      onEditPrompt ? () => onEditPrompt(id) : undefined
+                    }
                   />
                 </div>
-              ) : null}
+              ) : (
+                <>
+                  {imageAttachments.length > 0 && (
+                    <div className="mb-3 flex w-fit max-w-full flex-col gap-2">
+                      {imageAttachments.map((att) => {
+                        const previewUrl = resolvePreviewUrl(att)!;
+                        return (
+                          <ImageThumb
+                            key={att.id}
+                            src={previewUrl}
+                            alt={att.name}
+                            onOpen={() => openAttachment(att)}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
 
-              {canContinue ? (
-                <div className="mt-2 md:hidden">
-                  <button
-                    type="button"
-                    disabled={regenerateDisabled}
-                    onClick={() => onContinue?.(id)}
-                    className={cn(
-                      'inline-flex items-center gap-2 rounded-full px-3.5 py-2',
-                      'text-sm font-medium tracking-[-0.02em]',
-                      'bg-surface-secondary/90 text-foreground',
-                      'ring-1 ring-border-subtle/70',
-                      'active:scale-[0.98] transition-transform',
-                      'disabled:pointer-events-none disabled:opacity-40'
-                    )}
-                  >
-                    Continue generating
-                  </button>
-                </div>
-              ) : null}
+                  {(content || isStreaming || nonImageAttachments.length > 0) &&
+                  !hasOnlyImages ? (
+                    <div
+                      className={cn(
+                        'min-w-0 w-full max-w-full overflow-visible',
+                        'text-foreground',
+                        'max-md:rounded-[20px] max-md:rounded-tl-[8px]',
+                        'max-md:bg-surface-secondary/80 max-md:px-3.5 max-md:py-3',
+                        'max-md:ring-1 max-md:ring-border-subtle/60',
+                        isStreaming && content && 'streaming-text streaming-cursor',
+                        'select-text touch-manipulation'
+                      )}
+                    >
+                      {nonImageAttachments.length > 0 ? (
+                        <div className="mb-3 flex flex-wrap gap-2">
+                          {nonImageAttachments.map((att) => (
+                            <span
+                              key={att.id}
+                              className="rounded-full bg-surface-hover px-2.5 py-1 text-caption font-medium text-text-secondary"
+                            >
+                              {att.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="prose-vani max-md:text-chat max-md:leading-[1.65]">
+                        {segments.length > 0 ? (
+                          segments.map((segment, i) =>
+                            segment.type === 'artifact' ? (
+                              <ArtifactCard
+                                key={segment.artifact.id}
+                                artifact={segment.artifact}
+                                isActive={segment.artifact.id === activeArtifactId}
+                                onOpen={onOpenArtifact ?? (() => {})}
+                              />
+                            ) : (
+                              <MarkdownContent
+                                key={`${id}-seg-${i}`}
+                                content={segment.value}
+                                lazy={!isStreaming && segment.value.length > 1200}
+                              />
+                            )
+                          )
+                        ) : (
+                          <MarkdownContent
+                            content={renderContent || (isStreaming ? ' ' : '')}
+                            highlightParagraph={
+                              ttsState !== 'idle' ? ttsParagraphIndex : -1
+                            }
+                            lazy={!isStreaming && (renderContent?.length || 0) > 1200}
+                            streaming={!!isStreaming}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {showMeta ? <UsageFooter usage={usage} meta={meta} /> : null}
+
+                  {showActions ? (
+                    <MessageActions
+                      content={content}
+                      disabled={regenerateDisabled}
+                      ttsState={ttsState}
+                      feedback={feedback}
+                      pinned={!!pinned}
+                      keepVisible
+                      hoverReveal={false}
+                      onRegenerate={
+                        onRegenerate ? () => onRegenerate(id) : undefined
+                      }
+                      onContinue={
+                        canContinue ? () => onContinue?.(id) : undefined
+                      }
+                      onEditPrompt={
+                        onEditPrompt ? () => onEditPrompt(id) : undefined
+                      }
+                      onOpenCanvas={
+                        onOpenInCanvas
+                          ? () => onOpenInCanvas(id, content)
+                          : undefined
+                      }
+                      onShare={
+                        onShareMessage
+                          ? () => onShareMessage(id, content)
+                          : undefined
+                      }
+                      onPin={onPinMessage ? () => onPinMessage(id) : undefined}
+                      onSave={
+                        onSaveResponse
+                          ? () => onSaveResponse(id, content)
+                          : undefined
+                      }
+                      onExportMarkdown={
+                        onExportMarkdown
+                          ? () => onExportMarkdown(id, content)
+                          : undefined
+                      }
+                      onExportPdf={
+                        onExportPdf
+                          ? () => onExportPdf(id, content)
+                          : undefined
+                      }
+                      onDelete={
+                        onDeleteResponse
+                          ? () => onDeleteResponse(id)
+                          : undefined
+                      }
+                      onFeedback={
+                        onFeedback ? (v) => onFeedback(id, v) : undefined
+                      }
+                      onReadAloud={
+                        onReadAloud
+                          ? () => onReadAloud(id, content)
+                          : undefined
+                      }
+                      onPauseAloud={onPauseAloud}
+                      onStopAloud={onStopAloud}
+                    />
+                  ) : null}
+                </>
+              )}
             </div>
           </div>
         )}
       </div>
 
-      <MessageActionSheet
-        open={actionSheetOpen}
-        onClose={() => setActionSheetOpen(false)}
-        content={content}
-        role={role}
-        disabled={regenerateDisabled}
-        ttsState={ttsState}
-        onRegenerate={
-          onRegenerate && !isUser ? () => onRegenerate(id) : undefined
-        }
-        onContinue={
-          canContinue && !isUser ? () => onContinue?.(id) : undefined
-        }
-        onReadAloud={
-          onReadAloud && !isUser
-            ? () => onReadAloud(id, content)
-            : undefined
-        }
-        onPauseAloud={onPauseAloud}
-        onStopAloud={onStopAloud}
-      />
+      {isUser ? (
+        <MessageActionSheet
+          open={actionSheetOpen}
+          onClose={() => setActionSheetOpen(false)}
+          content={content}
+          role={role}
+          disabled={regenerateDisabled}
+          onEditPrompt={
+            onEditAndResend ? handleEditPromptAction : undefined
+          }
+        />
+      ) : null}
 
       <AttachmentLightbox
         attachment={lightboxAttachment}
@@ -484,6 +678,10 @@ function messagePropsEqual(prev: MessageProps, next: MessageProps) {
     prev.content === next.content &&
     prev.isStreaming === next.isStreaming &&
     prev.wasInterrupted === next.wasInterrupted &&
+    prev.status === next.status &&
+    prev.feedback === next.feedback &&
+    prev.pinned === next.pinned &&
+    prev.isLatestAssistant === next.isLatestAssistant &&
     prev.attachments === next.attachments &&
     prev.meta === next.meta &&
     prev.usage === next.usage &&
@@ -493,6 +691,19 @@ function messagePropsEqual(prev: MessageProps, next: MessageProps) {
     prev.onForgetMemory === next.onForgetMemory &&
     prev.onRegenerate === next.onRegenerate &&
     prev.onContinue === next.onContinue &&
+    prev.onRetry === next.onRetry &&
+    prev.onEditPrompt === next.onEditPrompt &&
+    prev.onEditAndResend === next.onEditAndResend &&
+    prev.onFeedback === next.onFeedback &&
+    prev.onOpenInCanvas === next.onOpenInCanvas &&
+    prev.onShareMessage === next.onShareMessage &&
+    prev.onPinMessage === next.onPinMessage &&
+    prev.onSaveResponse === next.onSaveResponse &&
+    prev.onExportMarkdown === next.onExportMarkdown &&
+    prev.onExportPdf === next.onExportPdf &&
+    prev.onDeleteResponse === next.onDeleteResponse &&
+    prev.forceEditing === next.forceEditing &&
+    prev.onForceEditingConsumed === next.onForceEditingConsumed &&
     prev.ttsState === next.ttsState &&
     prev.ttsParagraphIndex === next.ttsParagraphIndex &&
     prev.onReadAloud === next.onReadAloud &&

@@ -63,7 +63,7 @@ export function createAnthropicProvider(): ProviderAdapter {
           provider: "anthropic",
           configured: false,
           healthy: false,
-          error: "ANTHROPIC_API_KEY not set",
+          error: "not configured",
           checkedAt,
         };
       }
@@ -108,7 +108,7 @@ export function createAnthropicProvider(): ProviderAdapter {
       if (!this.isConfigured()) {
         yield {
           type: "error",
-          error: "Anthropic is not configured",
+          error: "This feature is temporarily unavailable. Please try again later.",
           retryable: true,
         };
         return;
@@ -160,19 +160,24 @@ export function createAnthropicProvider(): ProviderAdapter {
           }),
         });
       } catch (err) {
+        console.error("[provider:anthropic] fetch failed:", err);
         yield {
           type: "error",
-          error: err instanceof Error ? err.message : String(err),
+          error: "We couldn't generate a response. Please try again.",
           retryable: true,
         };
         return;
       }
 
       if (!res.ok || !res.body) {
-        const text = await res.text().catch(() => "");
+        console.error(
+          "[provider:anthropic] HTTP",
+          res.status,
+          await res.text().catch(() => "")
+        );
         yield {
           type: "error",
-          error: `Anthropic HTTP ${res.status}: ${text.slice(0, 300)}`,
+          error: "We couldn't generate a response. Please try again.",
           retryable: res.status >= 500 || res.status === 429,
         };
         return;
@@ -271,13 +276,10 @@ export function createAnthropicProvider(): ProviderAdapter {
               };
             }
           } else if (eventType === "error") {
+            console.error("[provider:anthropic] stream error:", payload);
             yield {
               type: "error",
-              error: String(
-                (payload.error as { message?: string })?.message ||
-                  payload.message ||
-                  "Anthropic stream error"
-              ),
+              error: "We couldn't generate a response. Please try again.",
               retryable: true,
             };
           }

@@ -18,7 +18,7 @@ export function getOpenAIClient() {
 
   const apiKey = getApiKey();
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is missing");
+    throw new Error("Image generation is temporarily unavailable.");
   }
 
   cachedClient = new OpenAI({ apiKey });

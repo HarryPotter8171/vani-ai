@@ -25,6 +25,7 @@ import {
   sanitizeForSpeech,
 } from "../textToSpeech/index.js";
 import { getVoiceEngine, isLiveVoiceEngine, LIVE_MODEL } from "../voiceLive/config.js";
+import { publicFeatureError } from "../../utils/errors.js";
 
 export class VoiceService {
   constructor(deps = {}) {
@@ -306,7 +307,7 @@ export class VoiceService {
       }
       yield {
         type: "error",
-        message: err?.message || "Speech synthesis failed.",
+        message: publicFeatureError("tts", err),
         code: err?.code || "TTS_FAILED",
       };
     }

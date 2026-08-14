@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"planId":{"$numberInt":"1"}},"name":"planId_1","unique":true},{"v":{"$numberInt":"2"},"key":{"rank":{"$numberInt":"1"}},"name":"rank_1"}],"uuid":"9e7ded6a9848473590734235b408d632","collectionName":"plans","type":"collection"}

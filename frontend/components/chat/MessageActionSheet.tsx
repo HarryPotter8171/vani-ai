@@ -8,6 +8,7 @@ import {
   Copy,
   Loader2,
   Pause,
+  Pencil,
   Play,
   RotateCcw,
   Share2,
@@ -28,6 +29,8 @@ export interface MessageActionSheetProps {
   ttsState?: TtsState;
   onRegenerate?: () => void;
   onContinue?: () => void;
+  onEditPrompt?: () => void;
+  onRetry?: () => void;
   onReadAloud?: () => void;
   onPauseAloud?: () => void;
   onStopAloud?: () => void;
@@ -36,8 +39,8 @@ export interface MessageActionSheetProps {
 type Feedback = 'up' | 'down' | null;
 
 /**
- * ChatGPT/Gemini-style mobile action sheet for long-pressed messages.
- * Desktop keeps the inline MessageActions row — this is mobile-only UX.
+ * Mobile long-press sheet for user bubbles (edit / copy / share).
+ * Assistant actions use the always-visible MessageActions toolbar + More menu.
  */
 export default function MessageActionSheet({
   open,
@@ -48,6 +51,8 @@ export default function MessageActionSheet({
   ttsState = 'idle',
   onRegenerate,
   onContinue,
+  onEditPrompt,
+  onRetry,
   onReadAloud,
   onPauseAloud,
   onStopAloud,
@@ -139,6 +144,17 @@ export default function MessageActionSheet({
       label: 'Share',
       icon: <Share2 size={18} strokeWidth={1.75} />,
       onClick: () => void handleShare(),
+      hidden: !content.trim(),
+    },
+    {
+      id: 'edit',
+      label: 'Edit prompt',
+      icon: <Pencil size={18} strokeWidth={1.75} />,
+      onClick: () => {
+        onEditPrompt?.();
+        onClose();
+      },
+      hidden: !onEditPrompt,
     },
     {
       id: 'like',
@@ -168,6 +184,17 @@ export default function MessageActionSheet({
       accent: true,
     },
     {
+      id: 'retry',
+      label: 'Retry',
+      icon: <RotateCcw size={18} strokeWidth={1.75} />,
+      onClick: () => {
+        onRetry?.();
+        onClose();
+      },
+      hidden: !isAssistant || !onRetry,
+      accent: true,
+    },
+    {
       id: 'regenerate',
       label: 'Regenerate',
       icon: <RotateCcw size={18} strokeWidth={1.75} />,
@@ -175,7 +202,7 @@ export default function MessageActionSheet({
         onRegenerate?.();
         onClose();
       },
-      hidden: !isAssistant || !onRegenerate,
+      hidden: !isAssistant || !onRegenerate || !!onRetry,
     },
     {
       id: 'read',

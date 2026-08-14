@@ -23,7 +23,7 @@ export async function POST() {
     .trim();
   if (!email) {
     return NextResponse.json(
-      { error: 'AUTH_DEV_EMAIL is not configured' },
+      { error: 'Local sign-in is not available. Check your development setup.' },
       { status: 500 }
     );
   }
@@ -31,7 +31,7 @@ export async function POST() {
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) {
     return NextResponse.json(
-      { error: 'NEXTAUTH_SECRET is not configured' },
+      { error: 'Local sign-in is not available. Check your development setup.' },
       { status: 500 }
     );
   }

@@ -10,6 +10,7 @@ import type {
   AgentTimelineEntry,
   AgentTypeId,
 } from './types';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export class AgentSession {
   id: string | null = null;
@@ -85,7 +86,10 @@ export class AgentSession {
         break;
       case 'error':
         this.status = 'failed';
-        this.error = event.error || 'Agent failed';
+        this.error = getUserFriendlyError(event.error, {
+          feature: 'agent',
+          fallback: 'Agent failed',
+        });
         break;
       case 'cancelled':
         this.status = 'cancelled';
@@ -122,7 +126,9 @@ export class AgentSession {
           kind: event.type,
           label: String(label),
           tool: event.name,
-          detail: event.error || event.detail,
+          detail: event.error
+            ? getUserFriendlyError(event.error, { feature: 'agent' })
+            : event.detail,
           ok: event.ok,
           stepId: event.stepId,
         },

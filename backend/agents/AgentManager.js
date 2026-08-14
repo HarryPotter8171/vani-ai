@@ -351,7 +351,8 @@ export class AgentManager {
       };
     } catch (err) {
       console.error("[AgentManager] run failed:", err);
-      session.error = err?.message || "Agent run failed";
+      session.error =
+        "We couldn't complete that task right now. Please try again.";
       session.setStatus(SESSION_STATUS.FAILED, session.error);
       yield* drain();
       yield {

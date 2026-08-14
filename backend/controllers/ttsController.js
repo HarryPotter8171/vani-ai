@@ -47,9 +47,9 @@ export async function textToSpeech(req, res) {
     // Generic client errors only — never echo provider/API-key details.
     return res.status(status).json({
       error:
-        status === 400 || status === 503
+        status === 400
           ? err.message || "Speech synthesis failed."
-          : "Speech synthesis failed.",
+          : "Speech is temporarily unavailable. Please try again later.",
       code: err.code || "TTS_FAILED",
     });
   }

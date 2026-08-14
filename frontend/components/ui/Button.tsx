@@ -55,15 +55,15 @@ const variantClass: Record<ButtonVariant, string> = {
 };
 
 const sizeClass: Record<ButtonSize, string> = {
-  sm: 'h-8 gap-1.5 px-3 text-caption',
-  md: 'h-9 gap-1.5 px-4 text-sm',
-  lg: 'h-11 gap-2 px-5 text-sidebar',
-  dialog: 'h-11 gap-2 px-4 text-sidebar',
+  sm: 'h-8 gap-1.5 px-3 text-caption max-md:min-h-[44px] max-md:px-3.5',
+  md: 'h-9 gap-1.5 px-4 text-sm max-md:min-h-[44px]',
+  lg: 'h-11 gap-2 px-5 text-sidebar max-md:min-h-[48px]',
+  dialog: 'h-11 gap-2 px-4 text-sidebar max-md:min-h-[48px]',
 };
 
 const iconSizeClass: Record<ButtonSize, string> = {
-  sm: 'h-8 w-8 p-0',
-  md: 'h-9 w-9 p-0',
+  sm: 'h-8 w-8 p-0 max-md:h-11 max-md:w-11',
+  md: 'h-9 w-9 p-0 max-md:h-11 max-md:w-11',
   lg: 'h-11 w-11 p-0',
   dialog: 'h-11 w-11 p-0',
 };

@@ -1,5 +1,6 @@
 import multer from "multer";
 import { STT_ALLOWED_MIME, STT_MAX_AUDIO_BYTES } from "../services/speechToText/config.js";
+import { toPublicErrorMessage } from "../utils/errors.js";
 
 const storage = multer.memoryStorage();
 
@@ -52,7 +53,7 @@ export function handleVoiceUploadError(err, _req, res, next) {
 
   if (err.code === "UNSUPPORTED_AUDIO") {
     return res.status(400).json({
-      error: err.message,
+      error: toPublicErrorMessage(err),
       code: err.code,
     });
   }

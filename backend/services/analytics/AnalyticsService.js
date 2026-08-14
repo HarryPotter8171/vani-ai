@@ -11,6 +11,7 @@ import {
   utcDayStart,
 } from "./config.js";
 import { logger } from "../../utils/logger.js";
+import { isMongoReady } from "../../config/mongoReady.js";
 
 const EMPTY_DAILY = () => ({
   chat_requests: 0,
@@ -130,6 +131,9 @@ export class AnalyticsService {
    */
   async recordApiRequest(req, res, latencyMs) {
     try {
+      // Never block auth / API on analytics — skip entirely when DB is down.
+      if (!isMongoReady()) return;
+
       const statusCode = res.statusCode || 0;
       const path = normalizePath(req);
       if (
@@ -137,7 +141,8 @@ export class AnalyticsService {
         path === "/ready" ||
         path === "/version" ||
         path.startsWith("/api/billing/webhooks") ||
-        path.startsWith("/api/analytics")
+        path.startsWith("/api/analytics") ||
+        path.startsWith("/api/auth/")
       ) {
         return;
       }
@@ -190,17 +195,22 @@ export class AnalyticsService {
           update.$inc[`models.${safeModelKey(model)}`] = tokens;
         }
 
-        void DailyUsage.updateOne({ user: userId, day }, update, {
-          upsert: true,
-        }).catch((err) =>
-          logger.debug(
-            { err: err?.message },
-            "[analytics] daily upsert failed"
-          )
-        );
+        // Fire-and-forget — never await analytics from the request path.
+        setImmediate(() => {
+          if (!isMongoReady()) return;
+          void DailyUsage.updateOne({ user: userId, day }, update, {
+            upsert: true,
+          }).catch((err) =>
+            logger.debug(
+              { err: err?.message },
+              "[analytics] daily upsert failed"
+            )
+          );
+        });
       }
 
       if (!shouldPersistApiEvent(statusCode)) return;
+      if (!isMongoReady()) return;
 
       const event = {
         type: isError ? "error" : "api_request",
@@ -216,9 +226,13 @@ export class AnalyticsService {
           : "",
       };
 
-      void AnalyticsEvent.create(event).catch((err) =>
-        logger.debug({ err: err?.message }, "[analytics] event create failed")
-      );
+      // Fire-and-forget — analytics must never affect the request lifecycle.
+      setImmediate(() => {
+        if (!isMongoReady()) return;
+        void AnalyticsEvent.create(event).catch((err) =>
+          logger.debug({ err: err?.message }, "[analytics] event create failed")
+        );
+      });
     } catch (err) {
       logger.debug(
         { err: err instanceof Error ? err.message : err },
@@ -236,6 +250,7 @@ export class AnalyticsService {
     meta,
   } = {}) {
     try {
+      if (!isMongoReady()) return;
       if (!userId || !model) return;
       const day = utcDayStart();
       const tok = Math.max(0, Number(tokens) || 0);
@@ -274,6 +289,7 @@ export class AnalyticsService {
     meta,
   } = {}) {
     try {
+      if (!isMongoReady()) return;
       if (!tool) return;
       void AnalyticsEvent.create({
         type: "tool_invocation",

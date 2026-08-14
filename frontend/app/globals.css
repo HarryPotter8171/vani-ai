@@ -163,12 +163,12 @@
   --space-10: 64px;
   --space-11: 96px;
 
-  /* ── Motion — Apple-style easing ── */
+  /* ── Motion — Apple-style easing (all under 250ms for consumer polish) ── */
   --motion-scale: 1;
-  --duration-fast: calc(140ms * var(--motion-scale));
-  --duration-normal: calc(220ms * var(--motion-scale));
-  --duration-enter: calc(280ms * var(--motion-scale));
-  --duration-slow: calc(400ms * var(--motion-scale));
+  --duration-fast: calc(120ms * var(--motion-scale));
+  --duration-normal: calc(200ms * var(--motion-scale));
+  --duration-enter: calc(220ms * var(--motion-scale));
+  --duration-slow: calc(240ms * var(--motion-scale));
   --ease-apple: cubic-bezier(0.25, 0.1, 0.25, 1);
   --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
@@ -1319,14 +1319,16 @@ html.dark .vani-composer:focus-within {
   max-width: var(--chat-column-max);
   margin-left: auto;
   margin-right: auto;
-  padding-left: var(--chat-column-pad-x);
-  padding-right: var(--chat-column-pad-x);
+  padding-left: max(var(--chat-column-pad-x), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--chat-column-pad-x), env(safe-area-inset-right, 0px));
   box-sizing: border-box;
+  min-width: 0;
 }
 
 @media (max-width: 420px) {
   :root {
     --chat-column-pad-x: 12px;
+    --chat-column-max: 100%;
   }
 }
 
@@ -1475,6 +1477,16 @@ html.dark .vani-composer:focus-within {
   margin-bottom: 0;
 }
 
+/* Character-stream polish: gentle fade on the live edge of the reply. */
+.streaming-markdown {
+  animation: stream-content-settle 180ms var(--ease-smooth) both;
+}
+
+@keyframes stream-content-settle {
+  from { opacity: 0.92; }
+  to { opacity: 1; }
+}
+
 @keyframes thinking-aura-pulse {
   0%, 100% {
     opacity: 0.35;
@@ -1585,6 +1597,62 @@ html.dark .vani-composer:focus-within {
   box-shadow: var(--shadow-1);
 }
 
+/* Press feedback for touch (mobile) — use on icon/row buttons */
+.pressable {
+  transition: transform var(--duration-fast) var(--ease-apple),
+    opacity var(--duration-fast) var(--ease-apple);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pressable:active {
+  transform: scale(0.97);
+  opacity: 0.92;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pressable:hover {
+    opacity: 0.9;
+  }
+}
+
+/* Ensure interactive icon buttons meet 44px on phones */
+@media (max-width: 767px) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  button:not([data-compact]):not(.no-touch-grow),
+  [role='button']:not([data-compact]):not(.no-touch-grow) {
+    /* Prefer explicit touch-target class; avoid global size thrash */
+  }
+}
+
+/* Screen-reader only + focusable skip link helper */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.focus\:not-sr-only:focus {
+  position: fixed;
+  width: auto;
+  height: auto;
+  padding: inherit;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
 /* Page / view transition helper */
 .page-enter {
   animation: page-enter var(--duration-enter) var(--ease-smooth) both;
@@ -1599,6 +1667,8 @@ html.dark .vani-composer:focus-within {
 .prose-vani .table-wrap {
   margin: 1.1rem 0;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-1);
@@ -1728,6 +1798,7 @@ html.dark .vani-composer:focus-within {
 @media (max-width: 767px) {
   :root {
     --chat-column-pad-x: 14px;
+    --chat-column-max: 100%;
     --text-assistant: 15.5px;
     --text-user: 15.5px;
     --text-chat: 16px;
@@ -1737,6 +1808,17 @@ html.dark .vani-composer:focus-within {
   .msg-enter,
   .msg-enter-user {
     animation-duration: 180ms;
+  }
+
+  /* Code / table blocks: native momentum scroll, no layout bleed */
+  .group\/code,
+  .prose-vani .table-wrap {
+    max-width: 100%;
+  }
+
+  .prose-vani img {
+    max-width: 100%;
+    height: auto;
   }
 
   /* Hide scrollbars in the conversation — more ChatGPT-like */
@@ -1754,9 +1836,15 @@ html.dark .vani-composer:focus-within {
     min-height: 44px;
   }
 
-  /* Composer: slightly roomier on phone */
+  /* Composer: slightly roomier on phone + never wider than viewport */
+  [data-testid="chat-composer"] {
+    width: 100%;
+    max-width: 100%;
+  }
+
   [data-testid="chat-composer"] form {
     min-height: 56px;
+    max-width: 100%;
   }
 
   /* Reduce paint cost from ambient blobs while scrolling chat */

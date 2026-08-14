@@ -49,7 +49,10 @@ function contentSecurityPolicy(): string {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    `connect-src 'self' https: wss: http://localhost:* http://127.0.0.1:*${connectExtra}`,
+    // Local Express is http://host:5001 — voice uses ws:// (not wss). Host
+    // sources like http://localhost:* do NOT cover the ws: scheme, so without
+    // ws: the browser blocks VoiceSocket and the backend never sees the upgrade.
+    `connect-src 'self' https: wss: ws: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*${connectExtra}`,
     "frame-src 'self' blob:",
     "worker-src 'self' blob:",
     "media-src 'self' blob:",
@@ -99,7 +102,7 @@ const nextConfig = {
           { key: 'Referrer-Policy', value: 'no-referrer' },
           {
             key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(), geolocation=()',
+            value: 'camera=(), microphone=(self), geolocation=()',
           },
         ],
       },

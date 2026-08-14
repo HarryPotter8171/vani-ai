@@ -40,6 +40,7 @@ import ChatHistoryItem from '@/components/sidebar/ChatHistoryItem';
 import SidebarSearchPanel from '@/components/sidebar/SidebarSearchPanel';
 import SidebarNavSection from '@/components/sidebar/SidebarNavSection';
 import { PremiumEmpty } from '@/components/ui/PremiumEmpty';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import UserMenu from '@/components/auth/UserMenu';
 import dynamic from 'next/dynamic';
 import ShareMenu from '@/components/chat/ShareMenu';
@@ -55,7 +56,14 @@ import { SPRING } from '@/lib/motion';
 /** PDF/export libs stay off the critical path until the user opens export. */
 const ExportMenu = dynamic(() => import('@/components/chat/ExportMenu'), {
   ssr: false,
-  loading: () => null,
+  loading: () => (
+    <span
+      className="inline-flex h-9 w-9 items-center justify-center rounded-full"
+      aria-hidden
+    >
+      <span className="h-4 w-4 animate-pulse rounded bg-surface-hover" />
+    </span>
+  ),
 });
 
 const MOBILE_DRAWER_WIDTH = 300;
@@ -203,6 +211,7 @@ function ProjectListItem({
   onArchiveProject,
   onDeleteProject,
 }: ProjectListItemProps) {
+  const confirm = useConfirm();
   const menuItems = [
     {
       label: project.pinned ? 'Unpin' : 'Pin',
@@ -256,9 +265,15 @@ function ProjectListItem({
       label: 'Delete',
       icon: Trash2,
       onClick: () => {
-        if (window.confirm(`Delete “${project.name}”?`)) {
-          void onDeleteProject?.(project._id);
-        }
+        void (async () => {
+          const ok = await confirm({
+            title: `Delete “${project.name}”?`,
+            description: 'This permanently removes the project and its knowledge files.',
+            confirmLabel: 'Delete',
+            variant: 'danger',
+          });
+          if (ok) void onDeleteProject?.(project._id);
+        })();
       },
     },
   ];
@@ -269,7 +284,7 @@ function ProjectListItem({
         type="button"
         onClick={onOpen}
         className={cn(
-          'flex w-full items-center gap-2 rounded-xs px-3.5 py-2 text-left',
+          'flex w-full items-center gap-2 rounded-xs px-3.5 py-2.5 text-left sidebar-row pressable',
           'text-secondary tracking-[-0.014em]',
           'transition-all duration-fast ease-out',
           isActive
@@ -396,7 +411,7 @@ function Sidebar({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [activeNav, setActiveNav] = useState<NavAction>('chat');
-  const [isDesktop, setIsDesktop] = useState(true);
+  const [isDesktop, setIsDesktop] = useState(false);
   const [mqReady, setMqReady] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const knowledgeInputRef = useRef<HTMLInputElement>(null);
@@ -629,8 +644,8 @@ function Sidebar({
         className={cn(
           'fixed z-50 flex flex-col',
           'inset-y-0 left-0',
-          /* Mobile drawer width; desktop width set via style */
-          'w-[min(300px,86vw)]',
+          /* Mobile: overlay drawer only — never consume main flex width */
+          'w-[min(300px,86vw)] max-md:max-w-[86vw]',
           'md:w-auto',
           isDesktop &&
             'transition-[width] duration-[220ms] ease-[cubic-bezier(0.23,1,0.32,1)]',
@@ -641,18 +656,22 @@ function Sidebar({
             (isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'),
           useMotionDrawer &&
             cn('will-change-transform touch-pan-y', !isOpen && 'pointer-events-none'),
+          /* Desktop only joins the flex row; mobile stays fixed overlay */
           'md:relative md:shrink-0 md:py-4',
+          isOpen ? 'max-md:pointer-events-auto' : 'max-md:pointer-events-none',
           rail ? 'md:pl-2 md:pr-2' : 'md:pl-4 md:pr-0'
         )}
         style={
-          isDesktop
-            ? {
-                width: desktopWidth,
-                transitionDuration: isResizing
-                  ? '0ms'
-                  : `${SIDEBAR_WIDTH_TRANSITION_MS}ms`,
-              }
-            : { width: MOBILE_DRAWER_WIDTH }
+          !mqReady
+            ? undefined
+            : isDesktop
+              ? {
+                  width: desktopWidth,
+                  transitionDuration: isResizing
+                    ? '0ms'
+                    : `${SIDEBAR_WIDTH_TRANSITION_MS}ms`,
+                }
+              : { width: MOBILE_DRAWER_WIDTH }
         }
         initial={false}
         animate={
@@ -1009,7 +1028,7 @@ function Sidebar({
                       size="sm"
                       icon={MessageSquare}
                       title="No chats in this project yet"
-                      description="Start a conversation to see it here."
+                      description="Start a conversation in this project and it’ll show up here."
                       className="px-2 py-4"
                     />
                   )}

@@ -6,6 +6,11 @@ import { revokeAccessToken } from "../utils/tokenRevocation.js";
 import { mcpRegistry } from "../mcp/MCPRegistry.ts";
 import { syncAdminRoleFromEnv } from "../middleware/requirePlatformAdmin.js";
 import { subscriptionService } from "../billing/SubscriptionService.ts";
+import {
+  ensureMongoReady,
+  isMongoUnavailableError,
+  sendDatabaseUnavailable,
+} from "../config/mongoReady.js";
 
 /** Cookie names that may carry auth material on the API host (not NextAuth). */
 const AUTH_COOKIE_NAMES = ["token", "access_token", "auth_token", "session"];
@@ -21,9 +26,16 @@ function clearAuthCookies(res) {
  * POST /api/auth/sync
  * Provision the Mongo user from a verified access JWT (issued by the Next.js app).
  * Creates the user only when the JWT is valid — never from client email fields.
+ * Never continues when Mongo is not ready (HTTP 503 within ~1s).
  */
 export async function syncUser(req, res) {
   try {
+    try {
+      await ensureMongoReady();
+    } catch {
+      return sendDatabaseUnavailable(res);
+    }
+
     const token = extractAccessToken(req);
     if (!token) {
       return res.status(401).json({ error: "Authentication required" });
@@ -92,9 +104,12 @@ export async function syncUser(req, res) {
       },
     });
   } catch (err) {
+    if (isMongoUnavailableError(err)) {
+      return sendDatabaseUnavailable(res);
+    }
     if (err.code === "AUTH_SECRET_MISSING") {
       console.error("[auth/sync]", err.message);
-      return res.status(500).json({ error: "Authentication is not configured" });
+      return res.status(500).json({ error: "Unable to sign in right now. Please try again." });
     }
     console.error("[auth/sync]", err);
     return res.status(500).json({ error: "Unable to sync user" });
@@ -151,8 +166,13 @@ export async function logout(req, res) {
           .toLowerCase()
           .trim();
         if (email && payload.purpose !== "file") {
-          const user = await User.findOne({ email }).select("_id");
-          if (user) userId = String(user._id);
+          try {
+            await ensureMongoReady();
+            const user = await User.findOne({ email }).select("_id");
+            if (user) userId = String(user._id);
+          } catch {
+            /* DB down — still revoke token + clear cookies */
+          }
         }
       } catch {
         /* token may already be invalid — still revoke + clear cookies */

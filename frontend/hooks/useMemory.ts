@@ -22,6 +22,7 @@ import {
   type MemoryScope,
   type MemorySettings,
 } from '@/lib/memory';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface UseMemoryOptions {
   /** When false, skip the initial network fetch (e.g. panel closed). */
@@ -113,7 +114,12 @@ export function useMemory({ enabled = true, chatId = null }: UseMemoryOptions = 
         setTotal(Math.max(result.total, list.length));
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Unable to load memories');
+        setError(
+          getUserFriendlyError(err, {
+            feature: 'memory',
+            fallback: 'Unable to load memories',
+          })
+        );
       } finally {
         if (!cancelled) setIsLoading(false);
       }

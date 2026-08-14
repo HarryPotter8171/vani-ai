@@ -6,6 +6,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -13,7 +14,7 @@ import remarkGfm from 'remark-gfm';
 import { Highlight, themes } from 'prism-react-renderer';
 import { Check, Copy } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { markdownUrlTransform, safeHref } from '@/lib/safeUrl';
+import { markdownUrlTransform, safeHref, isRenderableImageSrc, stripHallucinatedImageMarkdown } from '@/lib/safeUrl';
 
 /** Stable base plugins — math/KaTeX loaded on demand when `$` / `$$` present. */
 export const REMARK_PLUGINS = [remarkGfm];
@@ -100,17 +101,18 @@ function FencedCode({
         'group/code my-5 overflow-hidden rounded-[16px]',
         'border border-[var(--code-border)] bg-[var(--code-bg)]',
         'shadow-1',
-        'font-sans'
+        'font-sans',
+        'max-md:my-4 max-md:-mx-1'
       )}
     >
-      <div className="flex items-center justify-between border-b border-[var(--code-border)] bg-[var(--code-header)] px-4 py-2">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5" aria-hidden>
+      <div className="flex items-center justify-between border-b border-[var(--code-border)] bg-[var(--code-header)] px-3 py-2 sm:px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="hidden items-center gap-1.5 sm:flex" aria-hidden>
             <div className="h-2.5 w-2.5 rounded-full bg-[#FF5F56]/90" />
             <div className="h-2.5 w-2.5 rounded-full bg-[#FFBD2E]/90" />
             <div className="h-2.5 w-2.5 rounded-full bg-[#27C93F]/90" />
           </div>
-          <span className="text-micro font-medium uppercase tracking-[0.08em] text-[var(--code-text)]/45">
+          <span className="truncate text-micro font-medium uppercase tracking-[0.08em] text-[var(--code-text)]/45">
             {language}
           </span>
         </div>
@@ -119,10 +121,10 @@ function FencedCode({
           type="button"
           onClick={handleCopy}
           className={cn(
-            'flex items-center gap-1.5 rounded-full px-2.5 py-1',
+            'flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1',
             'text-micro font-medium',
             'bg-white/[0.06] text-[var(--code-text)]/55 hover:bg-white/[0.11] hover:text-[var(--code-text)]/90',
-            'opacity-80 transition-opacity group-hover/code:opacity-100'
+            'opacity-100 transition-opacity sm:opacity-80 sm:group-hover/code:opacity-100'
           )}
         >
           {copied ? (
@@ -139,23 +141,26 @@ function FencedCode({
         </button>
       </div>
 
-      <div className="custom-scrollbar overflow-x-auto">
+      <div className="custom-scrollbar -webkit-overflow-scrolling-touch overflow-x-auto overscroll-x-contain">
         <Highlight theme={themes.nightOwl} code={codeString} language={language as never}>
           {({ className: hlClass, style, tokens, getLineProps, getTokenProps }) => (
             <pre
-              className={cn(hlClass, 'm-0 px-4 py-3.5 font-mono text-sm leading-[1.65]')}
+              className={cn(
+                hlClass,
+                'm-0 min-w-0 px-3 py-3.5 font-mono text-[0.8125rem] leading-[1.65] sm:px-4 sm:text-sm'
+              )}
               style={{ ...style, background: 'transparent', margin: 0 }}
               {...props}
             >
               {tokens.map((line, i) => (
                 <div key={i} {...getLineProps({ line })} className="table-row">
                   <span
-                    className="table-cell select-none pr-4 text-right text-micro opacity-30"
+                    className="table-cell select-none pr-3 text-right text-micro opacity-30 sm:pr-4"
                     aria-hidden
                   >
                     {i + 1}
                   </span>
-                  <span className="table-cell">
+                  <span className="table-cell whitespace-pre">
                     {line.map((token, key) => (
                       <span key={key} {...getTokenProps({ token })} />
                     ))}
@@ -201,11 +206,47 @@ function Code({ className, children, ...props }: React.HTMLAttributes<HTMLElemen
 
 function MarkdownTable({ children }: { children?: React.ReactNode }) {
   return (
-    <div className="table-wrap custom-scrollbar">
+    <div className="table-wrap custom-scrollbar -webkit-overflow-scrolling-touch overscroll-x-contain">
       <table>{children}</table>
     </div>
   );
 }
+
+function MarkdownImage({
+  src,
+}: React.ImgHTMLAttributes<HTMLImageElement>) {
+  const srcStr = typeof src === 'string' ? src.trim() : '';
+  const safeSrc = isRenderableImageSrc(srcStr);
+  const [imgError, setImgError] = useState(!safeSrc);
+
+  useEffect(() => {
+    setImgError(!safeSrc);
+  }, [safeSrc]);
+
+  // Missing, empty, or invalid src — never mount <img> (avoids broken icon + alt text).
+  if (!safeSrc || imgError) {
+    return (
+      <div className="my-2 text-sm italic text-gray-400">[Image unavailable]</div>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={safeSrc}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={() => setImgError(true)}
+      className={cn(
+        'img-fade-in my-4 block h-auto max-h-[min(480px,60vh)] w-auto max-w-full',
+        'rounded-[14px] object-contain ring-1 ring-border-subtle',
+        'max-md:max-h-[min(280px,45vh)] max-md:rounded-[12px]'
+      )}
+    />
+  );
+}
+
 
 /** Inline citation superscript chip — numbers in [n] form become chips when citations exist. */
 export function CitationChip({
@@ -333,6 +374,7 @@ export const markdownComponents = {
   td: ({ children }: { children?: React.ReactNode }) => <td>{children}</td>,
   hr: () => <hr className="my-6 border-0 border-t border-divider" />,
   code: Code,
+  img: MarkdownImage,
 };
 
 export interface MarkdownContentProps {
@@ -340,23 +382,61 @@ export interface MarkdownContentProps {
   className?: string;
   /** When >= 0, highlight that speakable paragraph index during TTS. */
   highlightParagraph?: number;
+  /** Defer heavy Prism/KaTeX until near viewport (settled messages). */
+  lazy?: boolean;
+  /** Soften remounts while tokens arrive. */
+  streaming?: boolean;
 }
 
 function MarkdownContentInner({
   content,
   className,
   highlightParagraph = -1,
+  lazy = false,
+  streaming = false,
 }: MarkdownContentProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(
+    () => !lazy || typeof IntersectionObserver === 'undefined'
+  );
   const components = useMemo(() => markdownComponents, []);
   const counter = useMemo(() => ({ current: 0 }), [content, highlightParagraph]);
-  const needsMath = useMemo(() => contentLikelyHasMath(content), [content]);
+  const sanitizedContent = useMemo(
+    () => stripHallucinatedImageMarkdown(content),
+    [content]
+  );
+  const needsMath = useMemo(
+    () => contentLikelyHasMath(sanitizedContent),
+    [sanitizedContent]
+  );
   const [mathPlugins, setMathPlugins] = useState<MathPluginState | null>(
     () => (needsMath ? mathPluginsCache : null)
   );
 
   useEffect(() => {
-    if (!needsMath) {
-      setMathPlugins(null);
+    if (!lazy || visible) return;
+    const el = rootRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisible(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '240px 0px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [lazy, visible]);
+
+  useEffect(() => {
+    if (!visible || !needsMath) {
+      if (!needsMath) setMathPlugins(null);
       return;
     }
     if (mathPluginsCache) {
@@ -370,7 +450,7 @@ function MarkdownContentInner({
     return () => {
       cancelled = true;
     };
-  }, [needsMath]);
+  }, [needsMath, visible]);
 
   const remarkPlugins = (mathPlugins?.remark as typeof REMARK_PLUGINS) || REMARK_PLUGINS;
   const rehypePlugins = (mathPlugins?.rehype as typeof REHYPE_PLUGINS) || REHYPE_PLUGINS;
@@ -378,15 +458,29 @@ function MarkdownContentInner({
   return (
     <ParagraphHighlightContext.Provider value={highlightParagraph}>
       <ParaCounterContext.Provider value={counter}>
-        <div className={cn('prose-vani', className)}>
-          <ReactMarkdown
-            remarkPlugins={remarkPlugins}
-            rehypePlugins={rehypePlugins as never}
-            urlTransform={markdownUrlTransform}
-            components={components}
-          >
-            {content}
-          </ReactMarkdown>
+        <div
+          ref={rootRef}
+          className={cn(
+            'prose-vani',
+            streaming && 'streaming-markdown',
+            className
+          )}
+        >
+          {visible ? (
+            <ReactMarkdown
+              remarkPlugins={remarkPlugins}
+              rehypePlugins={rehypePlugins as never}
+              urlTransform={markdownUrlTransform}
+              components={components}
+            >
+              {sanitizedContent}
+            </ReactMarkdown>
+          ) : (
+            <p className="mb-0 whitespace-pre-wrap text-chat leading-[1.7] tracking-[-0.015em] text-text-secondary/80">
+              {sanitizedContent.slice(0, 280)}
+              {sanitizedContent.length > 280 ? '…' : ''}
+            </p>
+          )}
         </div>
       </ParaCounterContext.Provider>
     </ParagraphHighlightContext.Provider>

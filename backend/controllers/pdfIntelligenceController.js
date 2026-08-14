@@ -4,6 +4,7 @@
  */
 
 import crypto from "node:crypto";
+import { toPublicErrorMessage } from "../utils/errors.js";
 import {
   analyzeUploadedPdf,
   askAboutUploadedPdf,
@@ -24,7 +25,7 @@ async function assertOwnedFile(req) {
 
 function mapError(res, err, fallback) {
   if (err.code === "INVALID_ID") {
-    return res.status(400).json({ error: err.message });
+    return res.status(400).json({ error: toPublicErrorMessage(err) });
   }
   if (err.code === "NOT_FOUND") {
     return res.status(404).json({ error: "File not found." });
@@ -33,7 +34,7 @@ function mapError(res, err, fallback) {
     err instanceof UnsupportedPdfError ||
     err.code === "PDF_UNSUPPORTED"
   ) {
-    return res.status(415).json({ error: err.message, code: err.code });
+    return res.status(415).json({ error: toPublicErrorMessage(err), code: err.code });
   }
   if (
     err instanceof PasswordProtectedPdfError ||
@@ -43,7 +44,7 @@ function mapError(res, err, fallback) {
     err.code?.startsWith?.("PDF_")
   ) {
     return res.status(err.status || 422).json({
-      error: err.message,
+      error: toPublicErrorMessage(err),
       code: err.code,
       pageCount: err.pageCount,
       maxPages: err.maxPages,
@@ -152,7 +153,7 @@ export const analyzePdfStream = async (req, res) => {
   } catch (err) {
     send({
       type: "error",
-      error: err.message || "Unable to analyze PDF.",
+      error: toPublicErrorMessage(err, "Unable to analyze PDF."),
       code: err.code,
     });
     send({ type: "done", done: true });
@@ -221,7 +222,7 @@ export const askPdfStream = async (req, res) => {
   } catch (err) {
     send({
       type: "error",
-      error: err.message || "Unable to answer.",
+      error: toPublicErrorMessage(err, "Unable to answer."),
       code: err.code,
     });
     send({ type: "done", done: true });

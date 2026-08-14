@@ -18,6 +18,7 @@ import {
   type StartBrowserRunInput,
 } from '@/lib/browser';
 import { safeUrl } from '@/lib/safeUrl';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface AutomationWorkspaceProps {
   run: BrowserRun | null;
@@ -81,7 +82,12 @@ export default function AutomationWorkspace({
         });
         onOpenPanel?.();
       } catch (err) {
-        setLocalError(err instanceof Error ? err.message : 'Unable to start browser automation');
+        setLocalError(
+          getUserFriendlyError(err, {
+            feature: 'browser',
+            fallback: 'Unable to start browser automation',
+          })
+        );
       }
     },
     [goal, url, onStart, onOpenPanel]

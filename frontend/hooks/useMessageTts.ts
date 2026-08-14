@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TtsState } from '@/components/chat/MessageActions';
-import { consumeMp3Response, fetchTtsStream } from '@/lib/tts/client';
 
 /** Split markdown-ish text into speakable paragraphs (highlighting helpers). */
 export function splitSpeakableParagraphs(text: string): string[] {
@@ -18,48 +17,17 @@ export function splitSpeakableParagraphs(text: string): string[] {
     .filter((p) => p.length > 0);
 }
 
-const CACHE_LIMIT = 24;
-
-type CacheEntry = { blob: Blob };
-
-function normalizeCacheKey(text: string) {
-  return text.replace(/\s+/g, ' ').trim();
+function isNativeTtsSupported(): boolean {
+  return typeof window !== 'undefined' && 'speechSynthesis' in window;
 }
 
-function waitUntilEnded(
-  audio: HTMLAudioElement,
-  signal: AbortSignal
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'));
-      return;
-    }
-    if (audio.ended) {
-      resolve();
-      return;
-    }
-    const onEnded = () => {
-      cleanup();
-      resolve();
-    };
-    const onError = () => {
-      cleanup();
-      reject(new Error('Audio playback failed'));
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(new DOMException('Aborted', 'AbortError'));
-    };
-    const cleanup = () => {
-      audio.removeEventListener('ended', onEnded);
-      audio.removeEventListener('error', onError);
-      signal.removeEventListener('abort', onAbort);
-    };
-    audio.addEventListener('ended', onEnded);
-    audio.addEventListener('error', onError);
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
+function pickNativeVoice(): SpeechSynthesisVoice | null {
+  if (!isNativeTtsSupported()) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  const english = voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
+  const pool = english.length ? english : voices;
+  return pool.find((v) => v.default) || pool[0] || null;
 }
 
 export function useMessageTts(options?: {
@@ -67,203 +35,121 @@ export function useMessageTts(options?: {
 }) {
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [ttsState, setTtsState] = useState<TtsState>('idle');
-  const [paragraphIndex] = useState(-1);
-  const [error, setError] = useState<string | null>(null);
 
   const ttsStateRef = useRef<TtsState>('idle');
   const messageIdRef = useRef<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const objectUrlRef = useRef<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
   const generationRef = useRef(0);
+  const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onErrorRef = useRef(options?.onError);
 
   ttsStateRef.current = ttsState;
   onErrorRef.current = options?.onError;
 
-  const revokeObjectUrl = useCallback(() => {
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
+  const stopKeepAlive = useCallback(() => {
+    if (keepAliveRef.current) {
+      clearInterval(keepAliveRef.current);
+      keepAliveRef.current = null;
     }
   }, []);
 
-  const ensureAudio = useCallback(() => {
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-      audioRef.current.preload = 'auto';
-    }
-    return audioRef.current;
+  const startKeepAlive = useCallback(() => {
+    if (keepAliveRef.current) return;
+    keepAliveRef.current = setInterval(() => {
+      if (!isNativeTtsSupported() || !window.speechSynthesis.speaking) return;
+      window.speechSynthesis.pause();
+      window.speechSynthesis.resume();
+    }, 12_000);
   }, []);
 
-  const rememberCache = useCallback((key: string, blob: Blob) => {
-    const cache = cacheRef.current;
-    if (cache.has(key)) cache.delete(key);
-    cache.set(key, { blob });
-    while (cache.size > CACHE_LIMIT) {
-      const oldest = cache.keys().next().value;
-      if (oldest === undefined) break;
-      cache.delete(oldest);
-    }
-  }, []);
-
-  const stopAudioElement = useCallback(() => {
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load();
-    }
-    revokeObjectUrl();
-  }, [revokeObjectUrl]);
+  const resetIdle = useCallback(() => {
+    stopKeepAlive();
+    messageIdRef.current = null;
+    setActiveMessageId(null);
+    setTtsState('idle');
+  }, [stopKeepAlive]);
 
   const stop = useCallback(() => {
     generationRef.current += 1;
-    abortRef.current?.abort();
-    abortRef.current = null;
-    stopAudioElement();
-    messageIdRef.current = null;
-    setActiveMessageId(null);
-    setError(null);
-    setTtsState('idle');
-  }, [stopAudioElement]);
+    if (isNativeTtsSupported()) {
+      window.speechSynthesis.cancel();
+    }
+    resetIdle();
+  }, [resetIdle]);
 
   const pause = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    if (!isNativeTtsSupported()) return;
     if (ttsStateRef.current !== 'playing') return;
-    audio.pause();
+    window.speechSynthesis.pause();
+    stopKeepAlive();
     setTtsState('paused');
-  }, []);
+  }, [stopKeepAlive]);
 
-  const resume = useCallback(async () => {
-    const audio = audioRef.current;
-    if (!audio) return;
+  const resume = useCallback(() => {
+    if (!isNativeTtsSupported()) return;
     if (ttsStateRef.current !== 'paused') return;
-    try {
-      await audio.play();
-      setTtsState('playing');
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Unable to resume playback';
-      setError(message);
-      setTtsState('error');
-      onErrorRef.current?.(message);
-    }
-  }, []);
+    window.speechSynthesis.resume();
+    startKeepAlive();
+    setTtsState('playing');
+  }, [startKeepAlive]);
 
   const play = useCallback(
-    async (messageId: string, content: string) => {
+    (messageId: string, content: string) => {
       if (typeof window === 'undefined') return;
 
-      const text = content.trim();
+      const text =
+        splitSpeakableParagraphs(content).join(' ').trim() || content.trim();
       if (!text) return;
-      const key = normalizeCacheKey(text);
 
-      // Same message: playing → pause, paused → resume, loading → cancel.
+      // Same message: playing → pause, paused → resume.
       if (messageIdRef.current === messageId) {
         if (ttsStateRef.current === 'playing') {
           pause();
           return;
         }
         if (ttsStateRef.current === 'paused') {
-          await resume();
-          return;
-        }
-        if (ttsStateRef.current === 'loading') {
-          stop();
+          resume();
           return;
         }
       }
 
-      abortRef.current?.abort();
-      stopAudioElement();
+      if (!isNativeTtsSupported()) {
+        onErrorRef.current?.(
+          'Speech synthesis is not supported in this browser'
+        );
+        return;
+      }
 
+      // Bump generation before cancel so a prior utterance's interrupted
+      // onerror cannot clear the new playback.
       const generation = ++generationRef.current;
-      const controller = new AbortController();
-      abortRef.current = controller;
+      window.speechSynthesis.cancel();
+
       messageIdRef.current = messageId;
       setActiveMessageId(messageId);
-      setError(null);
 
-      const stillCurrent = () => generationRef.current === generation;
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      const voice = pickNativeVoice();
+      if (voice) utterance.voice = voice;
 
-      try {
-        const audio = ensureAudio();
-        const cached = cacheRef.current.get(key);
+      utterance.onstart = () => {
+        if (generationRef.current !== generation) return;
+        setTtsState('playing');
+        startKeepAlive();
+      };
+      utterance.onend = () => {
+        if (generationRef.current !== generation) return;
+        resetIdle();
+      };
+      utterance.onerror = () => {
+        if (generationRef.current !== generation) return;
+        resetIdle();
+      };
 
-        if (cached) {
-          setTtsState('playing');
-          revokeObjectUrl();
-          const url = URL.createObjectURL(cached.blob);
-          objectUrlRef.current = url;
-          audio.src = url;
-          audio.currentTime = 0;
-          await audio.play();
-          await waitUntilEnded(audio, controller.signal);
-          if (stillCurrent()) stop();
-          return;
-        }
-
-        setTtsState('loading');
-
-        const response = await fetchTtsStream(text, controller.signal);
-        if (!stillCurrent()) return;
-
-        revokeObjectUrl();
-
-        const { blob, objectUrl } = await consumeMp3Response(
-          response,
-          controller.signal,
-          {
-            audio,
-            onReady: () => {
-              if (!stillCurrent()) return;
-              // Respect an in-flight user pause during first-chunk start.
-              if (ttsStateRef.current === 'paused') return;
-              setTtsState('playing');
-            },
-          }
-        );
-
-        if (!stillCurrent()) {
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
-          return;
-        }
-
-        objectUrlRef.current = objectUrl;
-        rememberCache(key, blob);
-
-        await waitUntilEnded(audio, controller.signal);
-        if (stillCurrent()) stop();
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          return;
-        }
-        if (!stillCurrent()) return;
-        const message =
-          err instanceof Error ? err.message : 'Speech synthesis failed';
-        console.error('[tts]', err);
-        stopAudioElement();
-        messageIdRef.current = messageId;
-        setActiveMessageId(messageId);
-        setError(message);
-        setTtsState('error');
-        onErrorRef.current?.(message);
-      } finally {
-        if (abortRef.current === controller) abortRef.current = null;
-      }
+      setTtsState('playing');
+      window.speechSynthesis.speak(utterance);
     },
-    [
-      pause,
-      resume,
-      stop,
-      stopAudioElement,
-      ensureAudio,
-      revokeObjectUrl,
-      rememberCache,
-    ]
+    [pause, resume, resetIdle, startKeepAlive]
   );
 
   useEffect(() => () => stop(), [stop]);
@@ -271,8 +157,8 @@ export function useMessageTts(options?: {
   return {
     activeMessageId,
     ttsState,
-    paragraphIndex,
-    error,
+    paragraphIndex: -1,
+    error: null as string | null,
     play,
     pause,
     resume,

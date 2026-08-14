@@ -252,7 +252,11 @@ export async function* runMultiProviderAgent({
       }
 
       if (event.type === "error") {
-        yield { type: "delta", text: `\n\n_${event.error}_` };
+        console.error("[multiProviderAgent] upstream error:", event.error);
+        yield {
+          type: "delta",
+          text: "\n\n_We couldn't generate a response. Please try again._",
+        };
         if (lastUsage) yield { type: "usage", usage: lastUsage };
         return;
       }

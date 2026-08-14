@@ -4,25 +4,39 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { signIn, useSession } from 'next-auth/react';
 import {
-  getAccessToken,
-  AuthRequiredError,
+  resolveAccessToken,
   clearTokenCache,
   isBackendReachable,
   setBackendReachable,
+  type AuthFailureReason,
 } from '@/lib/apiClient';
-import { getApiBaseUrl } from '@/lib/constants';
 import { isDevAuthClientEnabled } from '@/lib/auth/clientFlags';
 import { clearClientAuthState } from '@/lib/auth/logout';
 import VaniLogo from '@/components/brand/VaniLogo';
 import { Button } from '@/components/ui/Button';
+import { isDeveloperMode, logDevError } from '@/lib/userFacingError';
 
 /** Hard ceiling — never show the splash longer than this, even if NextAuth hangs. */
 const BOOT_SPLASH_MS = 1500;
 const TOKEN_ENSURE_TIMEOUT_MS = 8_000;
 
+/** Production-safe copy — never leak stacks / status / infra. */
+const PROD_SIGN_IN_ERROR = 'Unable to sign in.\nPlease try again.';
+
+type GateAuthStatus =
+  | 'loading'
+  | 'authenticated'
+  | 'unauthenticated'
+  | 'error';
+
 function AuthLoading({ label }: { label: string }) {
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center gap-5 bg-background">
+    <div
+      className="relative flex min-h-screen flex-col items-center justify-center gap-5 bg-background"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
       <div className="app-background" aria-hidden>
         <div className="app-background-blobs">
           <span />
@@ -31,9 +45,17 @@ function AuthLoading({ label }: { label: string }) {
         </div>
       </div>
       <VaniLogo size="lg" glow />
-      <p className="relative text-sidebar font-medium tracking-[-0.014em] text-text-secondary">
-        {label}
-      </p>
+      <div className="relative flex flex-col items-center gap-3">
+        <div
+          className="h-1 w-24 overflow-hidden rounded-full bg-surface-hover"
+          aria-hidden
+        >
+          <div className="h-full w-1/2 animate-shimmer rounded-full bg-accent/50" />
+        </div>
+        <p className="text-sidebar font-medium tracking-[-0.014em] text-text-secondary">
+          {label}
+        </p>
+      </div>
     </div>
   );
 }
@@ -48,10 +70,10 @@ function BackendReconnectBanner({
   return (
     <div
       role="status"
-      className="fixed inset-x-0 top-0 z-[100] flex items-center justify-center gap-3 border-b border-border bg-surface-glass px-4 py-2 text-sm text-foreground backdrop-blur-xl"
+      className="fixed inset-x-0 top-0 z-[100] flex items-center justify-center gap-3 border-b border-border bg-surface-glass px-4 py-2.5 text-sm text-foreground backdrop-blur-xl pt-[max(0.5rem,env(safe-area-inset-top,0px))]"
     >
       <span className="text-text-secondary">
-        Can&apos;t reach the API. Check that the backend is running on this Wi‑Fi.
+        Having trouble connecting. We&apos;ll keep trying.
       </span>
       <Button
         type="button"
@@ -59,7 +81,7 @@ function BackendReconnectBanner({
         size="sm"
         onClick={onRetry}
         disabled={retrying}
-        className="bg-surface px-3 py-1 h-auto"
+        className="min-h-[44px] bg-surface px-3 py-1 h-auto touch-manipulation sm:min-h-0"
       >
         {retrying ? 'Retrying…' : 'Retry'}
       </Button>
@@ -67,22 +89,24 @@ function BackendReconnectBanner({
   );
 }
 
+function faceAuthError(reason?: AuthFailureReason | string | null): string {
+  if (isDeveloperMode() && reason) {
+    return `Unable to sign in (${reason}). Please try again.`;
+  }
+  return PROD_SIGN_IN_ERROR;
+}
+
 /**
  * Mobile-safe auth shell.
  *
- * EXACT infinite-loading cause (fixed):
- * Previously blocked on `!mounted || status === 'loading'` which never cleared
- * when client hydration / NextAuth session fetch stalled on LAN phones.
- *
- * Rules now:
- * - Splash at most BOOT_SPLASH_MS, then always render UI.
- * - Auth / backend token runs in the background — failure does not block the app.
- * - Unauthenticated users see the sign-in screen (not an infinite spinner).
+ * NEVER throws during startup. Auth / token failures update controlled state
+ * and show the login screen — React never crashes.
  */
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { data: session, status } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const [bootDone, setBootDone] = useState(false);
+  const [authStatus, setAuthStatus] = useState<GateAuthStatus>('loading');
   const [authReady, setAuthReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
@@ -91,25 +115,34 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [backendDown, setBackendDown] = useState(false);
   const [retryingBackend, setRetryingBackend] = useState(false);
   const prevEmailRef = useRef<string | null>(null);
-  const loggedRef = useRef(false);
   const devAuth = isDevAuthClientEnabled();
   const isPublicShare = pathname?.startsWith('/share/') ?? false;
   const sessionEmail =
-    status === 'authenticated' && session?.user?.email
+    sessionStatus === 'authenticated' && session?.user?.email
       ? String(session.user.email).toLowerCase()
       : null;
-  const signingOut = status === 'unauthenticated' ? false : signingOutFlag;
+  const signingOut = sessionStatus === 'unauthenticated' ? false : signingOutFlag;
+
+  const resetToLogin = (reason?: AuthFailureReason | string | null) => {
+    clearTokenCache();
+    clearClientAuthState();
+    setAuthReady(false);
+    setAuthStatus('unauthenticated');
+    setBackendDown(false);
+    if (reason) {
+      logDevError({ reason }, 'AuthGate.reset');
+      setError(faceAuthError(reason));
+    } else {
+      setError(null);
+    }
+  };
 
   // 1) Absolute splash ceiling — never infinite Loading on mobile.
   useEffect(() => {
-    console.info('[startup] 1. AuthGate mounted', {
-      href: typeof window !== 'undefined' ? window.location.href : null,
-      apiBase: getApiBaseUrl(),
-      nextAuthUrl: process.env.NEXT_PUBLIC_APP_URL,
-      status,
-    });
+    if (isDeveloperMode()) {
+      console.info('[startup] AuthGate mounted');
+    }
     const timer = setTimeout(() => {
-      console.info('[startup] 2. boot splash ceiling reached — rendering UI');
       setBootDone(true);
     }, BOOT_SPLASH_MS);
     return () => clearTimeout(timer);
@@ -117,14 +150,10 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    console.info('[startup] 3. NextAuth status →', status, {
-      email: session?.user?.email ?? null,
-      provider: session?.user?.provider ?? null,
-    });
-    if (status !== 'loading') {
+    if (sessionStatus !== 'loading') {
       setBootDone(true);
     }
-  }, [status, session?.user?.email, session?.user?.provider]);
+  }, [sessionStatus]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -134,6 +163,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         clearClientAuthState();
         setSigningOutFlag(true);
         setAuthReady(false);
+        setAuthStatus('unauthenticated');
       }
     } catch {
       /* ignore */
@@ -142,13 +172,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       clearClientAuthState();
       setSigningOutFlag(true);
       setAuthReady(false);
+      setAuthStatus('unauthenticated');
     };
     window.addEventListener('vani:signing-out', onSigningOut);
     return () => window.removeEventListener('vani:signing-out', onSigningOut);
   }, []);
 
   useEffect(() => {
-    if (status !== 'unauthenticated') return;
+    if (sessionStatus !== 'unauthenticated') return;
     try {
       localStorage.removeItem('nextauth.message');
     } catch {
@@ -158,95 +189,129 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     prevEmailRef.current = null;
     setSigningOutFlag(false);
     setAuthReady(false);
+    setAuthStatus('unauthenticated');
     setError(null);
-  }, [status]);
+  }, [sessionStatus]);
 
   useEffect(() => {
-    if (status !== 'authenticated' || !sessionEmail) return;
+    if (sessionStatus !== 'authenticated' || !sessionEmail) return;
     const prev = prevEmailRef.current;
     prevEmailRef.current = sessionEmail;
     if (prev && prev !== sessionEmail) {
       clearTokenCache();
       setAuthReady(false);
+      setAuthStatus('loading');
       setRetryToken((n) => n + 1);
     }
-  }, [status, sessionEmail]);
+  }, [sessionStatus, sessionEmail]);
 
-  // Background token mint — never blocks render.
+  // Background token mint — never blocks render, never throws into React.
   useEffect(() => {
     if (isPublicShare || signingOut) return;
-    if (status === 'loading') {
-      console.info('[startup] 4. waiting for NextAuth (non-blocking)');
+    if (sessionStatus === 'loading') {
+      setAuthStatus('loading');
       return;
     }
-    if (status === 'unauthenticated') {
-      console.info('[startup] 5. unauthenticated — sign-in UI');
+    if (sessionStatus === 'unauthenticated') {
       clearTokenCache();
       setAuthReady(false);
+      setAuthStatus('unauthenticated');
       setBackendDown(false);
       return;
     }
-    if (status !== 'authenticated') return;
+    if (sessionStatus !== 'authenticated') return;
 
     let cancelled = false;
-    console.info('[startup] 6. minting backend token', {
-      email: sessionEmail,
-      apiBase: getApiBaseUrl(),
-    });
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
 
-    const ensurePromise = getAccessToken({ force: retryToken > 0 });
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error('Startup authentication timed out')),
-        TOKEN_ENSURE_TIMEOUT_MS
-      );
-    });
+    const finishUnauthenticated = (reason: AuthFailureReason) => {
+      if (cancelled || settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      // Invalid / expired session token → clear and show login (no crash).
+      resetToLogin(reason);
+    };
 
-    void Promise.race([ensurePromise, timeoutPromise])
-      .then(() => {
-        if (cancelled) return;
-        const reachable = isBackendReachable();
-        console.info('[startup] 7. token ready', { backendReachable: reachable });
-        setAuthReady(true);
-        setError(null);
-        setBackendDown(!reachable);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error('[startup] 7. token failed — app still renders', err);
-        clearTokenCache();
-        setAuthReady(false);
-        setBackendDown(true);
-        setError(
-          err instanceof AuthRequiredError
-            ? 'Sign in to continue'
-            : err instanceof Error
-              ? err.message
-              : 'Unable to authenticate'
-        );
-      });
+    const finishOk = () => {
+      if (cancelled || settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      const reachable = isBackendReachable();
+      setAuthReady(true);
+      setAuthStatus('authenticated');
+      setError(null);
+      setBackendDown(!reachable);
+    };
+
+    const finishUnavailable = (reason: AuthFailureReason) => {
+      if (cancelled || settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      clearTokenCache();
+      setAuthReady(false);
+      setBackendDown(true);
+      // Soft failure: keep NextAuth session but mark gate as error so we can
+      // still render the app chrome with a reconnect banner (guest-continue).
+      setAuthStatus('error');
+      setError(faceAuthError(reason));
+      logDevError({ reason }, 'AuthGate.token');
+    };
+
+    timeoutId = setTimeout(() => {
+      // Timeout must NOT throw — transition to unauthenticated and continue.
+      if (cancelled || settled) return;
+      settled = true;
+      logDevError('Startup authentication timed out', 'AuthGate.timeout');
+      clearTokenCache();
+      setAuthReady(false);
+      setAuthStatus('unauthenticated');
+      setBackendDown(false);
+      setError(faceAuthError('timeout'));
+    }, TOKEN_ENSURE_TIMEOUT_MS);
+
+    void (async () => {
+      try {
+        const result = await resolveAccessToken({ force: retryToken > 0 });
+        if (cancelled || settled) return;
+
+        if (result.authenticated) {
+          finishOk();
+          return;
+        }
+
+        if (
+          result.reason === 'expired' ||
+          result.reason === 'unauthenticated' ||
+          result.reason === 'signed_out' ||
+          result.reason === 'invalid_token'
+        ) {
+          finishUnauthenticated(result.reason);
+          return;
+        }
+
+        // unavailable / unknown / timeout-like → reconnect UX, do not crash
+        finishUnavailable(result.reason);
+      } catch (err) {
+        // Absolute safety — structured state only, never rethrow.
+        logDevError(err, 'AuthGate.token');
+        if (cancelled || settled) return;
+        finishUnavailable('unknown');
+      }
+    })();
 
     return () => {
       cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [status, isPublicShare, retryToken, signingOut, sessionEmail]);
-
-  useEffect(() => {
-    if (loggedRef.current || !bootDone) return;
-    loggedRef.current = true;
-    console.info('[startup] 8. UI unlocked', {
-      status,
-      authReady,
-      backendDown,
-      apiBase: getApiBaseUrl(),
-    });
-  }, [bootDone, status, authReady, backendDown]);
+    // resetToLogin is stable enough via closures; avoid re-running on every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionStatus, isPublicShare, retryToken, signingOut, sessionEmail]);
 
   const continueAsDeveloper = async () => {
     if (devContinuing) return;
     setDevContinuing(true);
     setError(null);
-    console.info('[startup] Continue as developer');
     try {
       const res = await fetch('/api/auth/dev-continue', {
         method: 'POST',
@@ -255,12 +320,18 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error || 'Unable to start development session');
+        logDevError(body.error || `dev-continue ${res.status}`, 'AuthGate.dev');
+        setError(faceAuthError('unknown'));
+        setAuthStatus('unauthenticated');
+        setDevContinuing(false);
+        return;
       }
       window.location.assign('/');
     } catch (err) {
+      logDevError(err, 'AuthGate.dev');
       clearClientAuthState();
-      setError(err instanceof Error ? err.message : 'Unable to start development session');
+      setError(faceAuthError('unknown'));
+      setAuthStatus('unauthenticated');
       setDevContinuing(false);
     }
   };
@@ -268,20 +339,37 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const retryBackend = async () => {
     if (retryingBackend) return;
     setRetryingBackend(true);
-    console.info('[startup] retry backend');
     try {
       clearTokenCache();
       setBackendReachable(true);
-      await getAccessToken({ force: true });
+      const result = await resolveAccessToken({ force: true });
+      if (!result.authenticated) {
+        if (
+          result.reason === 'expired' ||
+          result.reason === 'unauthenticated' ||
+          result.reason === 'signed_out' ||
+          result.reason === 'invalid_token'
+        ) {
+          resetToLogin(result.reason);
+        } else {
+          setBackendDown(true);
+          setAuthStatus('error');
+          setError(faceAuthError(result.reason));
+        }
+        return;
+      }
       const reachable = isBackendReachable();
       setBackendDown(!reachable);
       if (reachable) {
         setError(null);
         setAuthReady(true);
+        setAuthStatus('authenticated');
       }
     } catch (err) {
-      console.warn('[startup] retry failed', err);
+      logDevError(err, 'AuthGate.retry');
       setBackendDown(true);
+      setAuthStatus('error');
+      setError(faceAuthError('unavailable'));
     } finally {
       setRetryingBackend(false);
       setRetryToken((n) => n + 1);
@@ -299,7 +387,11 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const fullyReady = authReady && status === 'authenticated' && !!sessionEmail;
+  const fullyReady =
+    authReady &&
+    authStatus === 'authenticated' &&
+    sessionStatus === 'authenticated' &&
+    !!sessionEmail;
 
   // Authenticated + token OK → app
   if (fullyReady) {
@@ -316,12 +408,16 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Authenticated but token/backend still settling or failed → still show app
-  // (requirement: if auth fails, render the application anyway).
-  if (status === 'authenticated' && sessionEmail) {
+  // Soft backend failure while NextAuth session is valid → continue into app
+  // (guest-continue) with reconnect banner. Never crash.
+  if (
+    sessionStatus === 'authenticated' &&
+    sessionEmail &&
+    (authStatus === 'error' || authStatus === 'loading' || authStatus === 'authenticated')
+  ) {
     return (
       <Fragment key={sessionEmail}>
-        {(backendDown || error) && (
+        {(backendDown || error || !authReady) && (
           <BackendReconnectBanner
             onRetry={() => void retryBackend()}
             retrying={retryingBackend}
@@ -332,7 +428,11 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Unauthenticated / unknown → sign-in (not a spinner).
+  // Unauthenticated / unknown → sign-in (not a spinner, not a crash).
+  const signInMessage = error
+    ? error
+    : 'Sign in to continue to your workspace.';
+
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center gap-6 bg-background px-6 text-center">
       <div className="app-background" aria-hidden>
@@ -352,17 +452,16 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             AI Operating System
           </p>
         </div>
-        <p className="max-w-[320px] text-sidebar leading-relaxed tracking-[-0.012em] text-text-secondary">
-          {error || 'Sign in to continue to your workspace.'}
+        <p className="max-w-[320px] whitespace-pre-line text-sidebar leading-relaxed tracking-[-0.012em] text-text-secondary">
+          {signInMessage}
         </p>
       </div>
       <div className="relative flex flex-col items-center gap-2 sm:flex-row">
         <Button
           variant="primary"
           size="lg"
-          className="px-6 duration-normal"
+          className="min-h-[48px] px-6 duration-normal touch-manipulation"
           onClick={() => {
-            console.info('[startup] Continue with Google');
             void signIn('google');
           }}
         >
@@ -387,6 +486,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             onClick={() => {
               clearTokenCache();
               setError(null);
+              setAuthStatus('loading');
               setRetryToken((n) => n + 1);
             }}
           >

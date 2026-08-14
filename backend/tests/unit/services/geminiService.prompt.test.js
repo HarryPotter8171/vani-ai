@@ -41,6 +41,15 @@ describe("geminiService system prompt — image tool awareness", () => {
     expect(prompt).toMatch(/image editing \(image_edit\)/i);
     expect(prompt).toMatch(/OCR text extraction \(ocr\)/i);
   });
+
+  it("forbids embedding fake images in chat text", () => {
+    const prompt = buildSystemInstruction("Alex", {});
+    expect(prompt).toContain("CHAT TEXT — NEVER FAKE IMAGES");
+    expect(prompt).toMatch(/Markdown image tags/i);
+    expect(prompt).toMatch(/base64 image data/i);
+    expect(prompt).toMatch(/data:image/i);
+    expect(prompt).toMatch(/never fabricate/i);
+  });
 });
 
 describe("geminiService system prompt — VANI identity", () => {

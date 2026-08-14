@@ -13,6 +13,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AlertCircle, CheckCircle2, Info, RotateCcw, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SPRING } from '@/lib/motion';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export type ToastVariant = 'error' | 'success' | 'info' | 'warning';
 
@@ -34,6 +35,12 @@ interface ToastContextValue {
     variant?: ToastVariant,
     options?: { action?: ToastAction; duration?: number }
   ) => void;
+  /** Success toast — short product confirmation (e.g. "Chat deleted"). */
+  toastSuccess: (message: string, options?: { action?: ToastAction; duration?: number }) => void;
+  /** Warning toast — recoverable attention (e.g. "Connection lost"). */
+  toastWarning: (message: string, options?: { action?: ToastAction; duration?: number }) => void;
+  /** Error toast — sanitizes technical messages automatically. */
+  toastError: (message: unknown, options?: { action?: ToastAction; duration?: number }) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -126,8 +133,20 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       variant: ToastVariant = 'info',
       options?: { action?: ToastAction; duration?: number }
     ) => {
-      const trimmed = String(message ?? '').trim();
+      // Errors always go through the friendly mapper; other variants keep
+      // product copy as-is unless it looks like raw technical noise.
+      const trimmed =
+        variant === 'error'
+          ? getUserFriendlyError(message)
+          : String(message ?? '').trim();
       if (!trimmed) return;
+
+      if (variant === 'error' && typeof console !== 'undefined') {
+        const original = String(message ?? '').trim();
+        if (original && original !== trimmed) {
+          console.error('[toast]', original);
+        }
+      }
 
       const existing = toastsRef.current.find(
         (t) => t.message === trimmed && t.variant === variant
@@ -150,6 +169,27 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     [scheduleDismiss]
   );
 
+  const toastSuccess = useCallback(
+    (message: string, options?: { action?: ToastAction; duration?: number }) => {
+      showToast(message, 'success', options);
+    },
+    [showToast]
+  );
+
+  const toastWarning = useCallback(
+    (message: string, options?: { action?: ToastAction; duration?: number }) => {
+      showToast(message, 'warning', options);
+    },
+    [showToast]
+  );
+
+  const toastError = useCallback(
+    (message: unknown, options?: { action?: ToastAction; duration?: number }) => {
+      showToast(getUserFriendlyError(message), 'error', options);
+    },
+    [showToast]
+  );
+
   useEffect(() => {
     const timers = timersRef.current;
     return () => {
@@ -158,13 +198,16 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const value = useMemo<ToastContextValue>(() => ({ showToast }), [showToast]);
+  const value = useMemo<ToastContextValue>(
+    () => ({ showToast, toastSuccess, toastWarning, toastError }),
+    [showToast, toastSuccess, toastWarning, toastError]
+  );
 
   return (
     <ToastContext.Provider value={value}>
       {children}
 
-      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[210] flex flex-col items-center gap-2.5 px-4 sm:bottom-8">
+      <div className="pointer-events-none fixed inset-x-0 bottom-[max(1.5rem,env(safe-area-inset-bottom,0px))] z-[210] flex flex-col items-center gap-2.5 px-4 sm:bottom-8">
         <AnimatePresence mode="popLayout">
           {toasts.map((toast) => {
             const { icon: Icon, iconClass, barClass } = VARIANT_META[toast.variant];
@@ -184,7 +227,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                   'bg-surface-elevated/95 text-foreground',
                   'border border-border',
                   'backdrop-blur-[24px] backdrop-saturate-[1.6]',
-                  'shadow-3'
+                  'shadow-3',
+                  'active:scale-[0.98] transition-transform duration-fast'
                 )}
               >
                 <span
@@ -195,6 +239,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                     toast.variant === 'warning' && 'bg-warning-muted',
                     toast.variant === 'info' && 'bg-accent-muted'
                   )}
+                  aria-hidden
                 >
                   <Icon size={15} strokeWidth={2.25} className={iconClass} />
                 </span>
@@ -209,10 +254,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                       dismissToast(toast.id);
                     }}
                     className={cn(
-                      'inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1',
+                      'inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1.5',
+                      'min-h-[44px] min-w-[44px] justify-center sm:min-h-0 sm:min-w-0',
                       'text-caption font-semibold tracking-[-0.014em]',
                       'bg-accent-muted text-accent hover:bg-accent/20',
-                      'transition-colors duration-fast'
+                      'transition-colors duration-fast touch-manipulation'
                     )}
                   >
                     <RotateCcw size={11} strokeWidth={2.5} />
@@ -224,9 +270,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                   onClick={() => dismissToast(toast.id)}
                   aria-label="Dismiss notification"
                   className={cn(
-                    'shrink-0 rounded-full p-1 text-text-tertiary',
+                    'shrink-0 rounded-full p-2.5 text-text-tertiary',
+                    'min-h-[44px] min-w-[44px] inline-flex items-center justify-center sm:min-h-0 sm:min-w-0 sm:p-1',
                     'transition-colors duration-fast ease-apple',
-                    'hover:bg-surface-hover hover:text-foreground'
+                    'hover:bg-surface-hover hover:text-foreground',
+                    'active:scale-95 touch-manipulation'
                   )}
                 >
                   <X size={13} />

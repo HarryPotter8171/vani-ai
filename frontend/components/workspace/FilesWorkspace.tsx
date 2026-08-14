@@ -14,12 +14,14 @@ import {
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { EASE } from '@/lib/motion';
 import { PremiumEmpty } from '@/components/ui/PremiumEmpty';
+import { SkeletonList } from '@/components/ui/Skeleton';
 import type { ProjectFile } from '@/lib/types';
 import {
   getAttachmentKind,
   readFileAsBase64,
   resolveMimeType,
 } from '@/lib/files';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface FilesWorkspaceProps {
   projectId: string | null;
@@ -137,16 +139,13 @@ export default function FilesWorkspace({
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 py-10 text-text-tertiary">
-          <Loader2 size={16} className="animate-spin" />
-          <span className="text-sm">Loading files…</span>
-        </div>
+        <SkeletonList rows={4} className="py-2" />
       ) : files.length === 0 ? (
         <PremiumEmpty
           size="sm"
           icon={Files}
           title="No files yet"
-          description="Drop documents here or click Add to build knowledge."
+          description="Upload PDFs, docs, or images to build project knowledge."
           className="rounded-[16px] border border-dashed border-border py-8"
         />
       ) : (
@@ -249,7 +248,12 @@ export function useProjectFiles(projectId: string | null) {
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Unable to load files');
+          setError(
+            getUserFriendlyError(err, {
+              feature: 'file',
+              fallback: 'Unable to load files',
+            })
+          );
           setFiles([]);
         }
       })

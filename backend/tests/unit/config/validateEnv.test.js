@@ -6,6 +6,8 @@ const ENV_KEYS = [
   "AUTH_JWT_SECRET",
   "NEXTAUTH_SECRET",
   "MONGODB_URI",
+  "MONGO_URI",
+  "DATABASE_URL",
   "GOOGLE_CLOUD_PROJECT",
   "GOOGLE_CLOUD_LOCATION",
   "GOOGLE_APPLICATION_CREDENTIALS",
@@ -171,5 +173,24 @@ describe("config/validateEnv", () => {
     process.env.NEXTAUTH_SECRET = "b".repeat(32);
     process.env.VANI_REPLICAS = "1";
     expect(() => validateEnvironment()).not.toThrow();
+  });
+
+  it("rejects MONGO_URI / DATABASE_URL aliases", () => {
+    setAllRequired();
+    process.env.MONGO_URI = "mongodb://127.0.0.1/other";
+    const result = validateEnvironment({ throwOnError: false });
+    expect(result.ok).toBe(false);
+    expect(result.failures.map((f) => f.name)).toEqual(
+      expect.arrayContaining([
+        "Mongo URI env aliases (MONGO_URI / DATABASE_URL must be unset)",
+      ])
+    );
+  });
+
+  it("rejects malformed MONGODB_URI", () => {
+    setAllRequired();
+    process.env.MONGODB_URI = "not-a-mongo-uri";
+    const result = validateEnvironment({ throwOnError: false });
+    expect(result.failures.map((f) => f.name)).toContain("MONGODB_URI format");
   });
 });

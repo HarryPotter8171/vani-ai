@@ -18,6 +18,7 @@ import type {
   StartBrowserRunInput,
 } from '@/lib/browser';
 import { GateDenialError, type GateDenial } from '@/lib/billing/gateError';
+import { toUserFacingError } from '@/lib/userFacingError';
 
 const ACTIVE: BrowserRun['status'][] = [
   'awaiting_approval',
@@ -60,7 +61,8 @@ export function useBrowser({
       if (!onGateDenialRef.current) onErrorRef.current?.(err.message);
       return;
     }
-    const message = err instanceof Error ? err.message : fallback;
+    const message = toUserFacingError(err, fallback);
+    console.error('[browser]', err);
     setError(message);
     onErrorRef.current?.(message);
   }, []);

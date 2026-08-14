@@ -302,7 +302,7 @@ export class BillingService {
         ok: true,
         mode: "local",
         message:
-          "Plan updated locally. Configure STRIPE_SECRET_KEY or RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET to enable Checkout.",
+          "Plan updated. Online checkout is temporarily unavailable.",
         checkoutUrl: null,
         subscription,
         overview: await this.getOverview(opts.userId),
@@ -463,10 +463,7 @@ export class BillingService {
     });
 
     if (!provider) {
-      throw httpError(
-        "Checkout requires STRIPE_SECRET_KEY or RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET",
-        503
-      );
+      throw httpError("Billing is temporarily unavailable.", 503);
     }
 
     if (provider === "razorpay") {

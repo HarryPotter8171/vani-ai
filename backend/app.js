@@ -30,11 +30,13 @@ import { initCodeInterpreter } from "./services/codeInterpreter/init.js";
 import { initBilling } from "./billing/init.js";
 import { usageTrackingMiddleware } from "./middleware/usageTracking.js";
 import { analyticsLoggingMiddleware } from "./middleware/analyticsLogging.js";
+import { requireMongoReady } from "./middleware/mongoReady.js";
 import { corsOriginDelegate } from "./utils/corsOrigins.js";
 import { httpLogger } from "./utils/logger.js";
 import { securityHeaders } from "./middleware/securityHeaders.js";
 import { requestTiming } from "./middleware/requestTiming.js";
 import { corsErrorHandler, globalErrorHandler } from "./middleware/errorHandler.js";
+import { configureMongoose } from "./config/mongoReady.js";
 
 /**
  * Build the Express application (no DB connect, no `listen`).
@@ -43,6 +45,9 @@ import { corsErrorHandler, globalErrorHandler } from "./middleware/errorHandler.
  * connection at import time.
  */
 export function createApp() {
+  // Ensure buffering is off even when tests import createApp without server.js.
+  configureMongoose();
+
   // Register model-callable tools / agent plugins / MCP / browser wiring.
   // Idempotent — safe to call once per process even across multiple test files.
   initTools();
@@ -105,6 +110,7 @@ export function createApp() {
 
   // Liveness/readiness/version probes — unauthenticated, no CORS/body-parsing
   // overhead, always reachable regardless of app-level config issues.
+  // MUST stay above requireMongoReady so orchestrators can probe while DB is down.
   app.use(healthRoutes);
 
   // CORS — environment whitelist only (never origin: "*"). Credentials enabled.
@@ -142,6 +148,10 @@ export function createApp() {
 
   // Routes
   app.get("/", (req, res) => res.send("Backend is running"));
+
+  // All /api/* DB routes: fail with 503 within ~1s if Mongo is not ready.
+  // Never allow mongoose buffering (10s) to hang auth/sync or other handlers.
+  app.use("/api", requireMongoReady);
 
   app.use("/api/auth", authRoutes);
   app.use("/api/models", modelRoutes);

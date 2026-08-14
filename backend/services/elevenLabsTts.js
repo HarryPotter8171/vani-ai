@@ -49,7 +49,7 @@ export function sanitizeForSpeech(text, userMessage = "") {
 export async function streamElevenLabsMp3(input, res) {
   const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   if (!apiKey) {
-    const err = new Error("ElevenLabs is not configured.");
+    const err = new Error("Speech is temporarily unavailable. Please try again later.");
     err.status = 503;
     err.code = "TTS_NOT_CONFIGURED";
     throw err;

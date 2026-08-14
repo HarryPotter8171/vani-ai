@@ -6,7 +6,10 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { ConfirmDialogProvider } from '@/components/ui/ConfirmDialog';
 import AuthProvider from '@/components/AuthProvider';
 import AuthGate from '@/components/AuthGate';
+import AuthErrorBoundary from '@/components/AuthErrorBoundary';
 import { MonitoringInit } from '@/components/MonitoringInit';
+import { AudioUnlockInit } from '@/components/AudioUnlockInit';
+import { OfflineBanner } from '@/components/OfflineBanner';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -43,12 +46,22 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className={`${inter.variable} font-sans antialiased`}>
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[300] focus:rounded-full focus:bg-foreground focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-background focus:shadow-2"
+        >
+          Skip to main content
+        </a>
         <MonitoringInit />
+        <AudioUnlockInit />
         <AuthProvider>
           <ThemeProvider>
             <ToastProvider>
+              <OfflineBanner />
               <ConfirmDialogProvider>
-                <AuthGate>{children}</AuthGate>
+                <AuthErrorBoundary>
+                  <AuthGate>{children}</AuthGate>
+                </AuthErrorBoundary>
               </ConfirmDialogProvider>
             </ToastProvider>
           </ThemeProvider>

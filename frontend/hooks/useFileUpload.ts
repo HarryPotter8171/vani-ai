@@ -17,6 +17,7 @@ import {
   uploadFilesToServer,
 } from '@/lib/upload';
 import type { MessageAttachment, PendingAttachment } from '@/lib/types';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export type IngestSource = 'upload' | 'paste' | 'camera' | 'drop';
 
@@ -222,7 +223,10 @@ export function useFileUpload() {
           return;
         }
 
-        const message = error.message || 'Couldn’t process this file';
+        const message = getUserFriendlyError(error, {
+          feature: 'upload',
+          fallback: 'Couldn’t process this file',
+        });
         patchAttachment(id, { status: 'error', error: message, progress: 0 });
         showToast(message, 'error');
       } finally {

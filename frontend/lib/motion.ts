@@ -44,16 +44,35 @@ export const MENU_MOTION = {
   transition: SPRING.soft,
 };
 
+/** Keep enter/exit under 250ms for a snappy consumer feel. */
 export const PAGE_TRANSITION = {
-  initial: { opacity: 0, y: 12 },
+  initial: { opacity: 0, y: 8 },
   animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -8 },
-  transition: { duration: 0.32, ease: EASE.smooth },
+  exit: { opacity: 0, y: -4 },
+  transition: { duration: 0.2, ease: EASE.smooth },
 };
 
 export const OVERLAY_FADE = {
   initial: { opacity: 0 },
   animate: { opacity: 1 },
   exit: { opacity: 0 },
-  transition: { duration: 0.18, ease: EASE.apple },
+  transition: { duration: 0.16, ease: EASE.apple },
+};
+
+export const SHEET_MOTION = {
+  initial: { opacity: 0, y: 16 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: 10 },
+  transition: { duration: 0.2, ease: EASE.smooth },
+};
+
+export const MESSAGE_ENTER = {
+  initial: { opacity: 0, y: 6 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.18, ease: EASE.smooth },
+};
+
+export const PRESS = {
+  whileTap: { scale: 0.97 },
+  transition: { duration: 0.12, ease: EASE.apple },
 };

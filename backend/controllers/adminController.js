@@ -1,3 +1,4 @@
+import { toPublicErrorMessage } from "../utils/errors.js";
 /**
  * Org Admin (Business+) — durable seats, members, and settings.
  * Plan gating is enforced at the router (`usageGuardFeature("admin")`).
@@ -33,16 +34,16 @@ function planIdFromReq(req) {
 
 function handleError(res, err) {
   if (err instanceof OrgValidationError) {
-    return res.status(400).json({ error: err.message, code: err.code });
+    return res.status(400).json({ error: toPublicErrorMessage(err), code: err.code });
   }
   if (err instanceof OrgForbiddenError) {
-    return res.status(403).json({ error: err.message, code: err.code });
+    return res.status(403).json({ error: toPublicErrorMessage(err), code: err.code });
   }
   if (err.status === 401) {
-    return res.status(401).json({ error: err.message || "Authentication required" });
+    return res.status(401).json({ error: toPublicErrorMessage(err, "Authentication required") });
   }
   console.error("[admin]", err);
-  return res.status(500).json({ error: err.message || "Admin request failed" });
+  return res.status(500).json({ error: toPublicErrorMessage(err, "Admin request failed") });
 }
 
 export const getAdminOverview = async (req, res) => {

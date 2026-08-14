@@ -10,10 +10,11 @@
 
 import { WebSocketServer } from "ws";
 import { verifyAccessToken } from "../../utils/jwt.js";
+import { publicFeatureError } from "../../utils/errors.js";
 import User from "../../models/User.js";
+import { ensureMongoReady } from "../../config/mongoReady.js";
 import { voiceService } from "./VoiceService.js";
-import {
-  parseClientMessage,
+import {  parseClientMessage,
   serverFrame,
   MAX_AUDIO_CHUNK_CHARS,
   MAX_UTTERANCE_BYTES,
@@ -50,17 +51,58 @@ const userSockets = new Map();
  */
 
 async function resolveUserFromToken(token) {
-  if (!token) return null;
+  console.log("[voice-ws] resolveUserFromToken: start", {
+    hasToken: Boolean(token),
+    tokenLength: token ? String(token).length : 0,
+  });
+
+  if (!token) {
+    console.log("[voice-ws] handshake FAIL: token missing from query string");
+    return null;
+  }
+
   let claims;
   try {
     claims = await verifyAccessToken(token);
-  } catch {
+    console.log("[voice-ws] JWT verification ok", {
+      email: claims?.email || null,
+      purpose: claims?.purpose || null,
+    });
+  } catch (err) {
+    console.log("[voice-ws] handshake FAIL: JWT verification failed", {
+      message: err?.message || String(err),
+      name: err?.name || null,
+    });
     return null;
   }
-  if (claims.purpose === "file") return null;
+  if (claims.purpose === "file") {
+    console.log("[voice-ws] handshake FAIL: JWT is a file-scoped token, not a session token");
+    return null;
+  }
+
+  try {
+    await ensureMongoReady();
+    console.log("[voice-ws] ensureMongoReady ok");
+  } catch (err) {
+    console.log("[voice-ws] handshake FAIL: ensureMongoReady() failed", {
+      message: err?.message || String(err),
+      code: err?.code || null,
+    });
+    return null;
+  }
 
   const user = await User.findOne({ email: claims.email });
-  if (!user) return null;
+  if (!user) {
+    console.log("[voice-ws] handshake FAIL: User.findOne returned null", {
+      email: claims.email || null,
+    });
+    return null;
+  }
+
+  console.log("[voice-ws] resolveUserFromToken ok", {
+    userId: String(user._id),
+    email: user.email,
+  });
   return {
     id: String(user._id),
     email: user.email,
@@ -187,10 +229,19 @@ export function attachVoiceWebSocket(httpServer) {
   if (typeof heartbeat.unref === "function") heartbeat.unref();
 
   wss.on("connection", async (ws, req) => {
+    console.log("[voice-ws] connection upgrade", {
+      url: req.url || null,
+      origin: req.headers?.origin || null,
+    });
+
     let url;
     try {
       url = new URL(req.url || "", "http://localhost");
-    } catch {
+    } catch (err) {
+      console.log("[voice-ws] handshake FAIL: could not parse request URL", {
+        raw: req.url || null,
+        message: err?.message || String(err),
+      });
       ws.close(4001, "bad request");
       return;
     }
@@ -199,17 +250,36 @@ export function attachVoiceWebSocket(httpServer) {
       url.searchParams.get("token") ||
       url.searchParams.get("access_token") ||
       "";
+    console.log("[voice-ws] query params", {
+      hasToken: Boolean(token),
+      tokenParam: Boolean(url.searchParams.get("token")),
+      accessTokenParam: Boolean(url.searchParams.get("access_token")),
+      sessionId: url.searchParams.get("sessionId") || null,
+    });
+
     const user = await resolveUserFromToken(token);
     if (!user) {
+      console.log("[voice-ws] closing 4401 unauthorized (resolveUserFromToken returned null)");
       ws.close(4401, "unauthorized");
       return;
     }
 
     const existing = userSockets.get(user.id);
     if (existing && existing.size >= MAX_CONNECTIONS_PER_USER) {
+      console.log("[voice-ws] handshake FAIL: too many voice connections", {
+        userId: user.id,
+        open: existing.size,
+        max: MAX_CONNECTIONS_PER_USER,
+      });
       ws.close(4429, "too many voice connections");
       return;
     }
+
+    console.log("[voice-ws] handshake ok", {
+      userId: user.id,
+      email: user.email,
+      sessionId: url.searchParams.get("sessionId") || null,
+    });
 
     /** @type {ConnectionState} */
     const state = {
@@ -293,7 +363,7 @@ export function attachVoiceWebSocket(httpServer) {
       } catch (err) {
         logger.error({ err: err.message }, "[voice-ws] handler error");
         send(ws, "error", {
-          message: err.message || "Voice handler failed.",
+          message: publicFeatureError("voice", err),
           code: err.code || "VOICE_WS_ERROR",
         });
       }
@@ -522,7 +592,7 @@ async function finalizeUtterance(ws, state, msg) {
     });
   } catch (err) {
     send(ws, "error", {
-      message: err.message || "Transcription failed.",
+      message: publicFeatureError("voice", err),
       code: err.code || "STT_FAILED",
     });
   }

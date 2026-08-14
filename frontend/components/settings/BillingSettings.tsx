@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Input';
 import { PremiumEmpty } from '@/components/ui/PremiumEmpty';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { Skeleton, SkeletonList, SkeletonCard } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/utils';
 import { useBilling } from '@/hooks/useBilling';
 import { useToast } from '@/components/ui/Toast';
@@ -304,6 +305,9 @@ function RadioOption({
 }
 
 function QuotaRow({ row }: { row: QuotaRemaining }) {
+  // Hide disabled metrics (plan limit 0) instead of showing empty 0/0 counters.
+  if (!row.unlimited && row.limit === 0) return null;
+
   const pct = row.unlimited ? 0 : row.percentUsed ?? 0;
   const barColor = pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-accent';
 
@@ -581,14 +585,16 @@ export default function BillingSettings({
             transition={{ duration: 0.28, ease: EASE }}
             className={cn(
               'relative flex w-full flex-col overflow-hidden',
-              'h-[100dvh] rounded-none sm:h-[80vh] sm:w-[90vw] sm:max-w-[740px] sm:rounded-xl',
+              'h-[100dvh] max-h-[100dvh] rounded-none',
+              'pt-[env(safe-area-inset-top,0px)]',
+              'sm:h-[80vh] sm:w-[90vw] sm:max-w-[740px] sm:rounded-xl sm:pt-0',
               'border-0 border-border sm:border',
               'bg-surface text-foreground',
               'shadow-3'
             )}
           >
             {/* Top header */}
-            <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-divider px-5">
+            <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-divider px-4 sm:px-5">
               <h2
                 id="settings-title"
                 className="text-assistant font-semibold tracking-[-0.024em] text-foreground"
@@ -598,10 +604,10 @@ export default function BillingSettings({
               <button
                 type="button"
                 onClick={onClose}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-secondary transition-colors duration-fast hover:bg-surface-hover hover:text-foreground"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full text-text-secondary transition-colors duration-fast hover:bg-surface-hover hover:text-foreground touch-manipulation sm:h-9 sm:w-9"
                 aria-label="Close"
               >
-                <X size={16} />
+                <X size={18} className="sm:h-4 sm:w-4" />
               </button>
             </header>
 
@@ -615,7 +621,7 @@ export default function BillingSettings({
                 role="tablist"
                 aria-label="Settings sections"
               >
-                <nav className="custom-scrollbar flex gap-0.5 overflow-x-auto px-2 py-2 sm:flex-1 sm:flex-col sm:overflow-y-auto sm:px-2.5 sm:py-3">
+                <nav className="custom-scrollbar flex gap-1 overflow-x-auto px-2 py-2 sm:flex-1 sm:flex-col sm:gap-0.5 sm:overflow-y-auto sm:px-2.5 sm:py-3">
                   {NAV.map(({ id, label, icon: Icon }) => (
                     <button
                       key={id}
@@ -624,15 +630,15 @@ export default function BillingSettings({
                       aria-selected={section === id}
                       onClick={() => setSection(id)}
                       className={cn(
-                        'flex h-10 shrink-0 items-center gap-2.5 rounded-[10px] px-3',
-                        'text-sm font-medium tracking-[-0.014em]',
+                        'flex h-11 shrink-0 items-center gap-2.5 rounded-[12px] px-3.5 touch-manipulation',
+                        'text-sm font-medium tracking-[-0.014em] sm:h-10 sm:rounded-[10px] sm:px-3',
                         'transition-all duration-fast ease-apple',
                         section === id
                           ? 'bg-accent-muted text-accent'
                           : 'text-text-secondary hover:bg-surface-hover hover:text-foreground'
                       )}
                     >
-                      <Icon size={15} strokeWidth={1.75} />
+                      <Icon size={16} strokeWidth={1.75} />
                       <span className="whitespace-nowrap">{label}</span>
                     </button>
                   ))}
@@ -641,17 +647,18 @@ export default function BillingSettings({
 
               {/* Right content */}
               <div className="flex min-w-0 flex-1 flex-col bg-background/30">
-                <div className="flex h-12 shrink-0 items-center border-b border-divider px-6">
+                <div className="flex h-12 shrink-0 items-center border-b border-divider px-4 sm:px-6">
                   <p className="text-sidebar font-semibold tracking-[-0.02em] text-foreground">
                     {sectionTitle}
                   </p>
                 </div>
 
-                <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-6">
+                <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:p-6">
                   {loading && !overview && needsBillingData ? (
-                    <div className="flex items-center justify-center gap-2 py-16 text-text-secondary">
-                      <Spinner size={16} />
-                      Loading…
+                    <div className="mx-auto flex w-full max-w-[500px] flex-col gap-4 py-2" aria-busy="true" aria-label="Loading billing">
+                      <SkeletonCard />
+                      <SkeletonList rows={3} />
+                      <Skeleton className="h-24 w-full" rounded="lg" />
                     </div>
                   ) : error && !overview && needsBillingData ? (
                     <ErrorState
@@ -980,12 +987,15 @@ export default function BillingSettings({
 
                             <Card title="Usage this period" description="Monthly limits for your plan">
                               <div className="grid gap-4 px-5 py-4">
-                                {overview.remaining.map((row) => (
+                                {overview.remaining
+                                  .filter((row) => row.unlimited || row.limit > 0)
+                                  .map((row) => (
                                   <QuotaRow key={row.metric} row={row} />
                                 ))}
                               </div>
                             </Card>
 
+                            {(overview.razorpayEnabled || overview.stripeEnabled) && (
                             <Card title="Payment & portal">
                               <div className="px-5 py-4">
                                 <p className="mb-4 text-sm leading-relaxed text-text-secondary">
@@ -993,9 +1003,7 @@ export default function BillingSettings({
                                     ? 'Manage payment methods via Razorpay or Stripe depending on your subscription.'
                                     : overview.razorpayEnabled
                                       ? 'Razorpay Checkout supports UPI, cards, and net banking.'
-                                      : overview.stripeEnabled
-                                        ? 'Update payment methods and invoices in the Stripe customer portal.'
-                                        : 'No payment gateway configured — plan changes apply locally for testing.'}
+                                      : 'Update payment methods and invoices in the Stripe customer portal.'}
                                 </p>
                                 {overview.stripeEnabled &&
                                   overview.subscription.paymentProvider !== 'razorpay' && (
@@ -1003,7 +1011,7 @@ export default function BillingSettings({
                                       type="button"
                                       disabled={upgrading}
                                       onClick={() => void openPortal()}
-                                      className="inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground px-3 text-caption font-medium text-background transition-all duration-fast disabled:opacity-60"
+                                      className="inline-flex h-11 min-h-[44px] items-center gap-1.5 rounded-full bg-foreground px-4 text-sm font-medium text-background transition-all duration-fast disabled:opacity-60 touch-manipulation sm:h-8 sm:min-h-0 sm:px-3 sm:text-caption"
                                     >
                                       Customer Portal
                                       <ExternalLink size={12} />
@@ -1011,6 +1019,7 @@ export default function BillingSettings({
                                   )}
                               </div>
                             </Card>
+                            )}
 
                             <section className="space-y-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1045,8 +1054,8 @@ export default function BillingSettings({
                                 <PremiumEmpty
                                   size="sm"
                                   icon={FileText}
-                                  title="No invoices yet"
-                                  description="Invoices appear here after a plan purchase or renewal."
+                                  title="No billing history"
+                                  description="Invoices and receipts will show up here after you subscribe or renew."
                                   className="rounded-xl border border-dashed border-border py-8"
                                 />
                               ) : (

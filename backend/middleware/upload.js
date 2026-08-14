@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import multer from "multer";
+import { toPublicErrorMessage } from "../utils/errors.js";
 import {
   ALLOWED_EXTENSIONS,
   CANONICAL_MIME_BY_EXT,
@@ -140,10 +141,10 @@ export function uploadFilesMiddleware(req, res, next) {
             error: 'Unexpected form field. Use "files" as the field name.',
           });
         }
-        return res.status(400).json({ error: err.message || "Upload failed." });
+        return res.status(400).json({ error: toPublicErrorMessage(err, "Upload failed.") });
       }
 
-      return res.status(400).json({ error: err.message || "Upload failed." });
+      return res.status(400).json({ error: toPublicErrorMessage(err, "Upload failed.") });
     }
 
     const files = req.files || [];

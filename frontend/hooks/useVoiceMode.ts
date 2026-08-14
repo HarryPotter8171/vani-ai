@@ -7,18 +7,13 @@ import {
   endVoiceSession,
   interruptVoiceSession,
   patchVoiceSession,
-  synthesizeSpeech,
-  synthesizeSpeechStream,
   transcribeAudioBlob,
 } from '@/lib/voice/api';
 import {
-  AudioPlaybackQueue,
   extractSpeakableChunks,
   stripMarkdownForSpeech,
 } from '@/lib/voice/audioPlayback';
 import { createSttSession } from '@/lib/voice/stt/provider';
-import { fetchTtsStream } from '@/lib/tts/client';
-import { Mp3PlaybackQueue } from '@/lib/tts/mp3Queue';
 import {
   isSpeechRecognitionSupported,
   isDuplicateTranscript,
@@ -27,12 +22,21 @@ import {
 import {
   VoiceActivityDetector,
   WaveformSampler,
-  VOICE_AUDIO_CONSTRAINTS,
   ensureEchoCancellation,
 } from '@/lib/voice/vad';
+import {
+  checkMicrophoneSupport,
+  classifyMicrophoneError,
+  createVoiceMediaRecorder,
+  refineDeniedReason,
+  requestMicrophoneStream,
+  stopMediaStream,
+  type MicFailureReason,
+} from '@/lib/voice/microphone';
 import { VoiceSocket, blobToBase64 } from '@/lib/voice/VoiceSocket';
 import { voiceEngineLog } from '@/lib/voice/voiceEngineLog';
 import { getVoiceRuntime, resetVoiceRuntime } from '@/lib/voice/runtime/VoiceRuntime';
+import { getUserFriendlyError, toUserFacingError } from '@/lib/userFacingError';
 import {
   DEFAULT_VOICE_SETTINGS,
   FALLBACK_VOICES,
@@ -78,6 +82,31 @@ function levelsEqual(a: number[], b: number[], epsilon = LEVELS_EPSILON): boolea
   return true;
 }
 
+function isNativeTtsSupported(): boolean {
+  return typeof window !== 'undefined' && 'speechSynthesis' in window;
+}
+
+function isNativeTtsPlaying(): boolean {
+  if (!isNativeTtsSupported()) return false;
+  return window.speechSynthesis.speaking || window.speechSynthesis.pending;
+}
+
+function nativeTtsLang(language: VoiceSettings['language']): string {
+  if (language === 'hi') return 'hi-IN';
+  if (language === 'hi-en') return 'en-IN';
+  return 'en-US';
+}
+
+function pickNativeVoice(lang: string): SpeechSynthesisVoice | null {
+  if (!isNativeTtsSupported()) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  const prefix = lang.slice(0, 2).toLowerCase();
+  const matching = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
+  const pool = matching.length ? matching : voices;
+  return pool.find((v) => v.default) || pool[0] || null;
+}
+
 export function useVoiceMode({
   chatId,
   projectId,
@@ -104,6 +133,10 @@ export function useVoiceMode({
   const [turns, setTurns] = useState<VoiceTurn[]>([]);
   const [levels, setLevels] = useState<number[]>(() => IDLE_LEVELS.slice());
   const [error, setError] = useState<string | null>(null);
+  const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+  const [micFailureReason, setMicFailureReason] =
+    useState<MicFailureReason>('denied');
+  const [micRequesting, setMicRequesting] = useState(false);
   const [muted, setMuted] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(DEFAULT_VOICE_SETTINGS.speakerOn);
   const [volume, setVolume] = useState(DEFAULT_VOICE_SETTINGS.volume);
@@ -125,12 +158,7 @@ export function useVoiceMode({
   const vadRef = useRef<VoiceActivityDetector | null>(null);
   const waveformRef = useRef<WaveformSampler | null>(null);
   const recognitionRef = useRef<SpeechRecognitionController | null>(null);
-  const playbackRef = useRef<AudioPlaybackQueue | null>(null);
-  const mp3QueueRef = useRef<Mp3PlaybackQueue | null>(null);
   const voiceSocketRef = useRef<VoiceSocket | null>(null);
-  const ttsMetaRef = useRef({ sampleRate: 24000, channels: 1, sampleWidth: 2 });
-  const ttsViaSocketRef = useRef(false);
-  const ttsAbortRef = useRef<AbortController | null>(null);
   const spokenOffsetRef = useRef(0);
   const speakBufferRef = useRef('');
   const lastAssistantIdRef = useRef<string | null>(null);
@@ -164,11 +192,13 @@ export function useVoiceMode({
   const sendMessageRef = useRef(sendMessage);
   const stopGeneratingRef = useRef(stopGenerating);
   const mountedRef = useRef(true);
-  /** Serialize TTS requests so PCM enqueue order stays correct while streaming. */
-  const speakChainRef = useRef<Promise<void>>(Promise.resolve());
   const speakGenerationRef = useRef(0);
   const messagesRef = useRef(messages);
-  const tryFinishElevenLabsSpeakRef = useRef<() => void>(() => undefined);
+  const nativeTtsPendingRef = useRef(0);
+  const nativeTtsSpeakingRef = useRef(false);
+  const nativeTtsEpochRef = useRef(0);
+  const nativeTtsKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tryFinishNativeSpeakRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -238,7 +268,7 @@ export function useVoiceMode({
         isLiveRef.current &&
         !mutedRef.current &&
         settingsRef.current.mode === 'hands-free' &&
-        !playbackRef.current?.isPlaying
+        !isNativeTtsPlaying()
       ) {
         void startListeningInternalRef.current();
       } else if (mountedRef.current && settingsRef.current.mode !== 'hands-free') {
@@ -312,24 +342,41 @@ export function useVoiceMode({
     mediaStreamRef.current = null;
   }, [clearMediaRecorder]);
 
+  const stopNativeTtsKeepAlive = useCallback(() => {
+    if (nativeTtsKeepAliveRef.current) {
+      clearInterval(nativeTtsKeepAliveRef.current);
+      nativeTtsKeepAliveRef.current = null;
+    }
+  }, []);
+
+  const startNativeTtsKeepAlive = useCallback(() => {
+    if (nativeTtsKeepAliveRef.current) return;
+    nativeTtsKeepAliveRef.current = setInterval(() => {
+      if (!isNativeTtsSupported() || !window.speechSynthesis.speaking) return;
+      window.speechSynthesis.pause();
+      window.speechSynthesis.resume();
+    }, 12_000);
+  }, []);
+
+  const cancelNativeTts = useCallback(() => {
+    nativeTtsEpochRef.current += 1;
+    nativeTtsPendingRef.current = 0;
+    nativeTtsSpeakingRef.current = false;
+    stopNativeTtsKeepAlive();
+    if (isNativeTtsSupported()) {
+      window.speechSynthesis.cancel();
+    }
+    if (mountedRef.current) setOutputLevel(0);
+  }, [stopNativeTtsKeepAlive]);
+
   const stopSpeaking = useCallback(() => {
     engineRef.current.invalidateSpeak();
     speakGenerationRef.current = engineRef.current.getSpeakGeneration();
-    ttsAbortRef.current?.abort();
-    ttsAbortRef.current = null;
-    speakChainRef.current = Promise.resolve();
-    playbackRef.current?.reset();
-    mp3QueueRef.current?.reset();
-  }, []);
+    cancelNativeTts();
+  }, [cancelNativeTts]);
 
   const releasePlayback = useCallback(async () => {
     stopSpeaking();
-    const playback = playbackRef.current;
-    playbackRef.current = null;
-    if (playback) await playback.dispose();
-    const mp3 = mp3QueueRef.current;
-    mp3QueueRef.current = null;
-    mp3?.dispose();
   }, [stopSpeaking]);
 
   const closeVoiceSocket = useCallback(() => {
@@ -353,9 +400,7 @@ export function useVoiceMode({
     spokenAssistantIdRef.current = null;
     lastSubmittedTranscriptRef.current = { text: '', at: 0 };
     pushToTalkActiveRef.current = false;
-    ttsViaSocketRef.current = false;
     speakGenerationRef.current += 1;
-    speakChainRef.current = Promise.resolve();
     engineRef.current.resetSession();
     runtimeRef.current.bus.reset();
     if (!mountedRef.current) return;
@@ -397,14 +442,13 @@ export function useVoiceMode({
       stopMicPipeline();
       voiceSocketRef.current?.close();
       voiceSocketRef.current = null;
-      ttsAbortRef.current?.abort();
-      ttsAbortRef.current = null;
-      const playback = playbackRef.current;
-      playbackRef.current = null;
-      void playback?.dispose();
-      const mp3 = mp3QueueRef.current;
-      mp3QueueRef.current = null;
-      mp3?.dispose();
+      if (isNativeTtsSupported()) window.speechSynthesis.cancel();
+      nativeTtsPendingRef.current = 0;
+      nativeTtsSpeakingRef.current = false;
+      if (nativeTtsKeepAliveRef.current) {
+        clearInterval(nativeTtsKeepAliveRef.current);
+        nativeTtsKeepAliveRef.current = null;
+      }
       const id = sessionIdRef.current;
       sessionIdRef.current = null;
       if (id) void endVoiceSession(id);
@@ -431,144 +475,119 @@ export function useVoiceMode({
     };
   }, [isLive]);
 
+  useEffect(() => {
+    if (!isLive || !isNativeTtsSupported()) return;
+    const synth = window.speechSynthesis;
+    const warm = () => {
+      synth.getVoices();
+    };
+    warm();
+    synth.addEventListener?.('voiceschanged', warm);
+    synth.onvoiceschanged = warm;
+    return () => {
+      synth.removeEventListener?.('voiceschanged', warm);
+      if (synth.onvoiceschanged === warm) synth.onvoiceschanged = null;
+    };
+  }, [isLive]);
+
   const displayElapsedLabel = isLive ? elapsedLabel : '00:00';
 
-  const ensurePlayback = useCallback(() => {
-    if (!playbackRef.current) {
-      playbackRef.current = new AudioPlaybackQueue({
-        onStart: () => {
-          if (isLiveRef.current && mountedRef.current) {
-            voiceEngineLog('speaking', 'playback started');
-          }
-        },
-        onIdle: () => {
-          if (!isLiveRef.current || mutedRef.current) return;
-          if (engineRef.current.getState() !== 'speaking') return;
-          voiceEngineLog('finished', 'playback idle');
-          engineRef.current.onSpeakComplete(engineRef.current.getSpeakGeneration());
-          scheduleReturnToListening();
-        },
-        onLevel: (level) => {
-          if (mountedRef.current && isLiveRef.current) {
-            setOutputLevel((prev) => (Math.abs(prev - level) < 0.04 ? prev : level));
-          }
-        },
-      });
-      playbackRef.current.setSpeakerOn(speakerOnRef.current);
-      playbackRef.current.setVolume(settingsRef.current.volume);
-    }
-    return playbackRef.current;
-  }, [scheduleReturnToListening]);
-
-  const ensureMp3Queue = useCallback(() => {
-    if (!mp3QueueRef.current) {
-      mp3QueueRef.current = new Mp3PlaybackQueue({
-        onStart: () => {
-          if (isLiveRef.current && mountedRef.current) {
-            voiceEngineLog('speaking', 'elevenlabs playback started');
-          }
-        },
-        onIdle: () => {
-          tryFinishElevenLabsSpeakRef.current();
-        },
-        onLevel: (level) => {
-          if (mountedRef.current && isLiveRef.current) {
-            setOutputLevel((prev) => (Math.abs(prev - level) < 0.04 ? prev : level));
-          }
-        },
-      });
-      mp3QueueRef.current.setVolume(settingsRef.current.volume);
-    }
-    return mp3QueueRef.current;
-  }, []);
-
   /**
-   * Complete ElevenLabs speak only when playback, in-flight fetches, speak
-   * buffer, and assistant stream have all drained — avoids restarting the mic
-   * between sentence chunks or while tokens are still arriving.
+   * Complete native speak only when queued utterances, speak buffer, and the
+   * assistant stream have all drained — avoids restarting the mic between
+   * sentence chunks or while tokens are still arriving.
    */
-  const tryFinishElevenLabsSpeak = useCallback(() => {
+  const tryFinishNativeSpeak = useCallback(() => {
     if (!isLiveRef.current || mutedRef.current) return;
     if (engineRef.current.getState() !== 'speaking') return;
-    if (mp3QueueRef.current?.hasPendingWork) return;
+    if (nativeTtsPendingRef.current > 0 || isNativeTtsPlaying()) return;
 
     const last = messagesRef.current[messagesRef.current.length - 1];
     if (last?.role === 'assistant' && last.isStreaming) return;
     if (speakBufferRef.current.trim()) return;
 
-    void speakChainRef.current.then(() => {
-      if (!isLiveRef.current || mutedRef.current) return;
-      if (engineRef.current.getState() !== 'speaking') return;
-      if (mp3QueueRef.current?.hasPendingWork) return;
-      const latest = messagesRef.current[messagesRef.current.length - 1];
-      if (latest?.role === 'assistant' && latest.isStreaming) return;
-      if (speakBufferRef.current.trim()) return;
-
-      voiceEngineLog('finished', 'elevenlabs playback idle');
-      engineRef.current.onSpeakComplete(engineRef.current.getSpeakGeneration());
-      scheduleReturnToListening();
-    });
+    voiceEngineLog('finished', 'native playback idle');
+    engineRef.current.onSpeakComplete(engineRef.current.getSpeakGeneration());
+    scheduleReturnToListening();
   }, [scheduleReturnToListening]);
 
   useEffect(() => {
-    tryFinishElevenLabsSpeakRef.current = tryFinishElevenLabsSpeak;
-  }, [tryFinishElevenLabsSpeak]);
+    tryFinishNativeSpeakRef.current = tryFinishNativeSpeak;
+  }, [tryFinishNativeSpeak]);
 
-  /** Fetch ElevenLabs MP3 for one speakable chunk and enqueue for immediate play. */
-  const enqueueElevenLabsChunk = useCallback(
-    (text: string, generation: number) => {
+  /** Queue a chunk on the browser Speech Synthesis API (no network TTS). */
+  const speakTextNative = useCallback(
+    (text: string, generation?: number) => {
       const clean = text.trim();
       if (!clean || !speakerOnRef.current) return;
+      if (
+        generation != null &&
+        generation !== engineRef.current.getSpeakGeneration()
+      ) {
+        return;
+      }
+      if (!isLiveRef.current || mutedRef.current) return;
 
-      const queue = ensureMp3Queue();
-      queue.expectMore();
+      if (!isNativeTtsSupported()) {
+        voiceEngineLog('error', 'Speech synthesis is not supported in this browser');
+        return;
+      }
 
-      speakChainRef.current = speakChainRef.current.then(async () => {
-        try {
-          if (
-            generation !== engineRef.current.getSpeakGeneration() ||
-            !isLiveRef.current ||
-            mutedRef.current ||
-            !speakerOnRef.current
-          ) {
-            return;
-          }
+      const utterance = new SpeechSynthesisUtterance(clean);
+      const { speed, volume, language } = settingsRef.current;
+      utterance.lang = nativeTtsLang(language);
+      utterance.rate = Math.min(2, Math.max(0.5, speed || 1));
+      utterance.volume = Math.min(1, Math.max(0, volume));
+      const voice = pickNativeVoice(utterance.lang);
+      if (voice) utterance.voice = voice;
 
-          const controller = new AbortController();
-          ttsAbortRef.current = controller;
-          try {
-            voiceEngineLog('debug', 'tts chunk via /api/tts', { chars: clean.length });
-            const response = await fetchTtsStream(clean, controller.signal);
-            const blob = await response.blob();
-            if (
-              generation !== engineRef.current.getSpeakGeneration() ||
-              controller.signal.aborted ||
-              !isLiveRef.current
-            ) {
-              return;
-            }
-            queue.setVolume(settingsRef.current.volume);
-            queue.enqueue(blob);
-          } catch (err) {
-            if (err instanceof DOMException && err.name === 'AbortError') return;
-            voiceEngineLog(
-              'error',
-              err instanceof Error ? err.message : 'ElevenLabs chunk failed'
-            );
-          } finally {
-            if (ttsAbortRef.current === controller) ttsAbortRef.current = null;
-          }
-        } finally {
-          queue.releaseExpect();
+      nativeTtsPendingRef.current += 1;
+      const epoch = nativeTtsEpochRef.current;
+      voiceEngineLog('debug', 'tts via speechSynthesis', { chars: clean.length });
+
+      const onSettled = () => {
+        if (epoch !== nativeTtsEpochRef.current) return;
+        if (
+          generation != null &&
+          generation !== engineRef.current.getSpeakGeneration()
+        ) {
+          return;
         }
-      });
+        nativeTtsPendingRef.current = Math.max(0, nativeTtsPendingRef.current - 1);
+        if (nativeTtsPendingRef.current === 0) {
+          nativeTtsSpeakingRef.current = false;
+          stopNativeTtsKeepAlive();
+          if (mountedRef.current) setOutputLevel(0);
+          tryFinishNativeSpeakRef.current();
+        }
+      };
+
+      utterance.onstart = () => {
+        if (epoch !== nativeTtsEpochRef.current) return;
+        if (
+          generation != null &&
+          generation !== engineRef.current.getSpeakGeneration()
+        ) {
+          return;
+        }
+        nativeTtsSpeakingRef.current = true;
+        startNativeTtsKeepAlive();
+        if (mountedRef.current && isLiveRef.current) {
+          setOutputLevel(0.55);
+          voiceEngineLog('speaking', 'native playback started');
+        }
+      };
+      utterance.onend = onSettled;
+      utterance.onerror = onSettled;
+
+      window.speechSynthesis.speak(utterance);
     },
-    [ensureMp3Queue]
+    [startNativeTtsKeepAlive, stopNativeTtsKeepAlive]
   );
 
   /**
    * Speak the full assistant reply exactly once (fallback when mid-stream
-   * chunking produced nothing). Prefers ElevenLabs /api/tts, then legacy PCM.
+   * chunking produced nothing).
    */
   const speakAssistantOnce = useCallback(
     (assistantId: string, text: string) => {
@@ -593,240 +612,18 @@ export function useVoiceMode({
 
       const generation = engineRef.current.getSpeakGeneration();
       speakGenerationRef.current = generation;
-      ttsAbortRef.current?.abort();
-      ttsAbortRef.current = null;
-      playbackRef.current?.reset();
+      cancelNativeTts();
 
-      speakChainRef.current = Promise.resolve().then(async () => {
-        if (
-          generation !== engineRef.current.getSpeakGeneration() ||
-          mutedRef.current ||
-          !isLiveRef.current ||
-          !speakerOnRef.current
-        ) {
-          return;
-        }
-
-        voiceEngineLog('speaking', 'synthesize start', {
-          chars: clean.length,
-          assistantId,
-        });
-
-        const playback = ensurePlayback();
-        const controller = new AbortController();
-        ttsAbortRef.current = controller;
-        const { voice, speed } = settingsRef.current;
-        const sid = sessionIdRef.current;
-        const sock = voiceSocketRef.current;
-
-        const finishSpeak = (ok: boolean, scheduleRestart: boolean) => {
-          if (generation !== engineRef.current.getSpeakGeneration()) return;
-          if (ok) engineRef.current.onSpeakComplete(generation);
-          else engineRef.current.onSpeakFailed(generation);
-          if (scheduleRestart) scheduleReturnToListening();
-        };
-
-        const waitForPlaybackIdle = () =>
-          new Promise<void>((resolve) => {
-            const started = Date.now();
-            const tick = () => {
-              if (
-                controller.signal.aborted ||
-                generation !== engineRef.current.getSpeakGeneration() ||
-                (!playback.isPlaying && playback.pending === 0)
-              ) {
-                resolve();
-                return;
-              }
-              if (Date.now() - started > 180_000) {
-                resolve();
-                return;
-              }
-              setTimeout(tick, 80);
-            };
-            setTimeout(tick, 40);
-          });
-
-        try {
-          if (sock?.connected) {
-            voiceEngineLog('debug', 'tts via websocket');
-            ttsViaSocketRef.current = true;
-            const done = new Promise<boolean>((resolve) => {
-              let gotAudio = false;
-              const off = sock.on((ev) => {
-                if (
-                  controller.signal.aborted ||
-                  generation !== engineRef.current.getSpeakGeneration()
-                ) {
-                  off();
-                  resolve(gotAudio);
-                  return;
-                }
-                if (ev.type === 'tts.meta') {
-                  ttsMetaRef.current = {
-                    sampleRate: ev.sampleRate || 24000,
-                    channels: ev.channels || 1,
-                    sampleWidth: ev.sampleWidth || 2,
-                  };
-                } else if (ev.type === 'tts.audio' && ev.data) {
-                  gotAudio = true;
-                  const binary = atob(ev.data);
-                  const bytes = new Uint8Array(binary.length);
-                  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                  playback.enqueuePcm(bytes.buffer, ttsMetaRef.current, speed);
-                } else if (ev.type === 'tts.done') {
-                  off();
-                  resolve(gotAudio);
-                } else if (ev.type === 'error' && ttsViaSocketRef.current) {
-                  off();
-                  resolve(gotAudio);
-                } else if (ev.type === 'interrupted') {
-                  off();
-                  resolve(gotAudio);
-                }
-              });
-              controller.signal.addEventListener(
-                'abort',
-                () => {
-                  off();
-                  resolve(gotAudio);
-                },
-                { once: true }
-              );
-              if (!sock.speak(clean, { voice, speed })) {
-                off();
-                resolve(false);
-              }
-            });
-            const ok = await done;
-            ttsViaSocketRef.current = false;
-            if (ok) {
-              await waitForPlaybackIdle();
-              voiceEngineLog('finished', 'websocket TTS complete');
-              return;
-            }
-            if (controller.signal.aborted) return;
-          }
-
-          if (generation !== engineRef.current.getSpeakGeneration()) return;
-
-          voiceEngineLog('debug', 'tts via http sse');
-          let gotAudio = false;
-          try {
-            await synthesizeSpeechStream({
-              text: clean,
-              voice,
-              speed,
-              sessionId: sid,
-              signal: controller.signal,
-              onMeta: (m) => {
-                ttsMetaRef.current = {
-                  sampleRate: m.sampleRate,
-                  channels: m.channels,
-                  sampleWidth: m.sampleWidth,
-                };
-              },
-              onAudio: (chunk) => {
-                gotAudio = true;
-                playback.enqueuePcm(chunk, ttsMetaRef.current, speed);
-              },
-            });
-            if (gotAudio) {
-              await waitForPlaybackIdle();
-              voiceEngineLog('finished', 'sse TTS complete');
-              return;
-            }
-          } catch {
-            /* try oneshot */
-          }
-
-          if (controller.signal.aborted || generation !== engineRef.current.getSpeakGeneration()) {
-            return;
-          }
-
-          voiceEngineLog('debug', 'tts via http oneshot');
-          try {
-            const result = await synthesizeSpeech({
-              text: clean,
-              voice,
-              speed,
-              sessionId: sid,
-              signal: controller.signal,
-            });
-            const binary = atob(result.audioBase64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            playback.enqueuePcm(
-              bytes.buffer,
-              {
-                sampleRate: result.sampleRate,
-                channels: result.channels,
-                sampleWidth: result.sampleWidth,
-              },
-              speed
-            );
-            await waitForPlaybackIdle();
-            voiceEngineLog('finished', 'oneshot TTS complete');
-            return;
-          } catch {
-            /* ElevenLabs /api/tts fallback */
-          }
-
-          if (controller.signal.aborted || generation !== engineRef.current.getSpeakGeneration()) {
-            return;
-          }
-
-          voiceEngineLog('debug', 'tts via /api/tts (ElevenLabs)');
-          try {
-            const response = await fetchTtsStream(clean, controller.signal);
-            const blob = await response.blob();
-            if (
-              controller.signal.aborted ||
-              generation !== engineRef.current.getSpeakGeneration()
-            ) {
-              return;
-            }
-            const queue = ensureMp3Queue();
-            queue.setVolume(settingsRef.current.volume);
-            queue.enqueue(blob);
-            await new Promise<void>((resolve) => {
-              const started = Date.now();
-              const tick = () => {
-                if (
-                  controller.signal.aborted ||
-                  generation !== engineRef.current.getSpeakGeneration() ||
-                  (!queue.isPlaying && queue.pending === 0)
-                ) {
-                  resolve();
-                  return;
-                }
-                if (Date.now() - started > 180_000) {
-                  resolve();
-                  return;
-                }
-                setTimeout(tick, 80);
-              };
-              setTimeout(tick, 40);
-            });
-            voiceEngineLog('finished', 'elevenlabs TTS complete');
-            return;
-          } catch (err) {
-            voiceEngineLog(
-              'error',
-              err instanceof Error ? err.message : 'ElevenLabs TTS failed'
-            );
-            finishSpeak(false, true);
-          }
-        } finally {
-          ttsViaSocketRef.current = false;
-          if (ttsAbortRef.current === controller) ttsAbortRef.current = null;
-        }
+      voiceEngineLog('speaking', 'synthesize start', {
+        chars: clean.length,
+        assistantId,
       });
+      speakTextNative(clean, generation);
     },
-    [ensurePlayback, ensureMp3Queue, scheduleReturnToListening]
+    [cancelNativeTts, scheduleReturnToListening, speakTextNative]
   );
 
-  // Stream assistant tokens → speakable chunks → ElevenLabs TTS immediately.
+  // Stream assistant tokens → speakable chunks → native speechSynthesis immediately.
   useEffect(() => {
     if (!isLive) return;
     const last = messages[messages.length - 1];
@@ -872,8 +669,7 @@ export function useVoiceMode({
       speakBufferRef.current = '';
       spokenOffsetRef.current = 0;
       spokenAssistantIdRef.current = null;
-      mp3QueueRef.current?.reset();
-      playbackRef.current?.reset();
+      cancelNativeTts();
       voiceEngineLog('thinking', 'assistant streaming', { id: last.id });
     }
 
@@ -914,26 +710,24 @@ export function useVoiceMode({
       if (!began) return;
       spokenAssistantIdRef.current = last.id;
       speakGenerationRef.current = engineRef.current.getSpeakGeneration();
-      ttsAbortRef.current?.abort();
-      ttsAbortRef.current = null;
     }
 
     const generation = engineRef.current.getSpeakGeneration();
     for (const chunk of speakable) {
-      enqueueElevenLabsChunk(chunk, generation);
+      speakTextNative(chunk, generation);
     }
 
-    // Stream finished — if nothing is queued/fetching, complete speak.
     if (!last.isStreaming) {
-      tryFinishElevenLabsSpeak();
+      tryFinishNativeSpeak();
     }
   }, [
     messages,
     isLive,
     speakAssistantOnce,
-    enqueueElevenLabsChunk,
+    speakTextNative,
+    cancelNativeTts,
     scheduleReturnToListening,
-    tryFinishElevenLabsSpeak,
+    tryFinishNativeSpeak,
   ]);
 
   /** Send an utterance already committed by VoiceEngine — single network path. */
@@ -988,7 +782,12 @@ export function useVoiceMode({
       engineRef.current.completeSend(true);
     } catch (err) {
       engineRef.current.onSendFailed();
-      setError(err instanceof Error ? err.message : 'Failed to send voice message');
+      setError(
+        getUserFriendlyError(err, {
+          feature: 'voice',
+          fallback: 'Failed to send voice message',
+        })
+      );
       voiceEngineLog('error', 'sendMessage failed');
       scheduleReturnToListening();
     }
@@ -1007,15 +806,12 @@ export function useVoiceMode({
   const startMediaRecorder = useCallback((stream: MediaStream) => {
     clearMediaRecorder();
     recordedChunksRef.current = [];
-    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : '';
     try {
-      const recorder = mime
-        ? new MediaRecorder(stream, { mimeType: mime })
-        : new MediaRecorder(stream);
+      const recorder = createVoiceMediaRecorder(stream);
+      if (!recorder) {
+        mediaRecorderRef.current = null;
+        return;
+      }
       mediaRecorderRef.current = recorder;
 
       const sock = voiceSocketRef.current;
@@ -1032,9 +828,13 @@ export function useVoiceMode({
           // Stream chunks over duplex WS while recording (no polling).
           const live = voiceSocketRef.current;
           if (live?.connected && e.data.size > 0) {
-            void blobToBase64(e.data).then((b64) => {
-              live.sendAudioChunk(b64, partialTranscriptRef.current || undefined);
-            });
+            void blobToBase64(e.data)
+              .then((b64) => {
+                live.sendAudioChunk(b64, partialTranscriptRef.current || undefined);
+              })
+              .catch(() => {
+                /* ignore chunk encode failures */
+              });
           }
         }
       };
@@ -1042,8 +842,10 @@ export function useVoiceMode({
       (recorder as MediaRecorder & { __vaniOnData?: typeof onDataAvailable }).__vaniOnData =
         onDataAvailable;
 
-      recorder.start(80);
-    } catch {
+      // 250ms timeslice — more reliable on Android Chrome than 80ms.
+      recorder.start(250);
+    } catch (err) {
+      console.error('[voice] MediaRecorder start failed', err);
       mediaRecorderRef.current = null;
     }
   }, [clearMediaRecorder]);
@@ -1134,9 +936,20 @@ export function useVoiceMode({
     }
   }, []);
 
+  const surfaceMicFailure = useCallback(async (err: unknown) => {
+    console.error('[voice] microphone failure', err);
+    const reason = await refineDeniedReason(err);
+    if (!mountedRef.current) return reason;
+    setMicFailureReason(reason);
+    setMicPermissionDenied(true);
+    setError(null);
+    setMicRequesting(false);
+    return reason;
+  }, []);
+
   const startListeningInternal = useCallback(async () => {
     if (!isLiveRef.current || mutedRef.current || engineRef.current.isBusy()) return;
-    if (playbackRef.current?.isPlaying) return;
+    if (isNativeTtsPlaying()) return;
     if (listenStartingRef.current) return;
 
     listenStartingRef.current = true;
@@ -1150,9 +963,7 @@ export function useVoiceMode({
 
     try {
       if (!mediaStreamRef.current) {
-        mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
-          audio: VOICE_AUDIO_CONSTRAINTS,
-        });
+        mediaStreamRef.current = await requestMicrophoneStream();
       } else {
         await ensureEchoCancellation(mediaStreamRef.current);
       }
@@ -1182,7 +993,7 @@ export function useVoiceMode({
         return;
       }
 
-      // Backend STT recorder always runs as a reliability fallback.
+      // Backend STT recorder always runs as a reliability fallback when supported.
       if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
         startMediaRecorder(stream);
       }
@@ -1218,15 +1029,25 @@ export function useVoiceMode({
           },
           onError: (err) => {
             if (err === 'not-allowed' && mountedRef.current) {
-              setError('Microphone permission denied.');
-              setPhase('error');
+              void surfaceMicFailure(err).then(() => {
+                // Fall back to text — tear down live session without crashing.
+                isLiveRef.current = false;
+                engineRef.current.setLive(false);
+                setIsLive(false);
+                setPhase('idle');
+              });
             }
           },
         });
         const recognition = recognitionRef.current;
         if (recognition) {
-          recognition.resetUtteranceState();
-          recognition.start();
+          try {
+            recognition.resetUtteranceState();
+            recognition.start();
+          } catch (startErr) {
+            console.error('[voice] SpeechRecognition.start failed', startErr);
+            recognitionRef.current = null;
+          }
         }
       }
 
@@ -1242,34 +1063,38 @@ export function useVoiceMode({
             if (engineRef.current.isBusy()) return;
             const activeCycle = listenCycleIdRef.current;
             void (async () => {
-              const committed = await engineRef.current.requestListenFinalize(
-                activeCycle,
-                async () => {
-                  recognitionRef.current?.stop();
-                  await new Promise((r) => setTimeout(r, 320));
-                  if (activeCycle !== listenCycleIdRef.current) return null;
+              try {
+                const committed = await engineRef.current.requestListenFinalize(
+                  activeCycle,
+                  async () => {
+                    recognitionRef.current?.stop();
+                    await new Promise((r) => setTimeout(r, 320));
+                    if (activeCycle !== listenCycleIdRef.current) return null;
 
-                  const local =
-                    finalTranscriptRef.current.trim() ||
-                    partialTranscriptRef.current.trim() ||
-                    '';
-                  if (local) {
-                    return local;
+                    const local =
+                      finalTranscriptRef.current.trim() ||
+                      partialTranscriptRef.current.trim() ||
+                      '';
+                    if (local) {
+                      return local;
+                    }
+                    return await flushRecorderToStt();
                   }
-                  return await flushRecorderToStt();
+                );
+                if (committed) {
+                  await sendCommittedUtteranceRef.current(committed);
+                  return;
                 }
-              );
-              if (committed) {
-                await sendCommittedUtteranceRef.current(committed);
-                return;
-              }
-              if (
-                isLiveRef.current &&
-                !mutedRef.current &&
-                !engineRef.current.isBusy() &&
-                engineRef.current.getState() === 'listening'
-              ) {
-                void startListeningInternalRef.current();
+                if (
+                  isLiveRef.current &&
+                  !mutedRef.current &&
+                  !engineRef.current.isBusy() &&
+                  engineRef.current.getState() === 'listening'
+                ) {
+                  void startListeningInternalRef.current().catch(() => undefined);
+                }
+              } catch (vadErr) {
+                console.error('[voice] VAD finalize failed', vadErr);
               }
             })();
           },
@@ -1288,23 +1113,41 @@ export function useVoiceMode({
       }
 
       if (sessionIdRef.current) {
-        void patchVoiceSession(sessionIdRef.current, { state: 'listening' });
+        void patchVoiceSession(sessionIdRef.current, { state: 'listening' }).catch(
+          () => undefined
+        );
       }
     } catch (err) {
       if (generation === listenGenerationRef.current && mountedRef.current) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Unable to access the microphone. Check browser permissions.'
-        );
-        setPhase('error');
+        const reason = classifyMicrophoneError(err);
+        const isMicIssue =
+          reason === 'denied' ||
+          reason === 'blocked' ||
+          reason === 'unavailable' ||
+          reason === 'unsupported' ||
+          reason === 'insecure' ||
+          reason === 'allow';
+        if (isMicIssue) {
+          await surfaceMicFailure(err);
+          // Fall back to text chat — tear down live session without crashing.
+          isLiveRef.current = false;
+          engineRef.current.setLive(false);
+          setIsLive(false);
+          setPhase('idle');
+          stopMediaStream(mediaStreamRef.current);
+          mediaStreamRef.current = null;
+        } else {
+          console.error('[voice] listen pipeline failed', err);
+          setError("Couldn't start listening. Tap the mic to try again.");
+          setPhase('error');
+        }
       }
     } finally {
       if (generation === listenGenerationRef.current) {
         listenStartingRef.current = false;
       }
     }
-  }, [flushRecorderToStt, publishLevels, startMediaRecorder]);
+  }, [flushRecorderToStt, publishLevels, startMediaRecorder, surfaceMicFailure]);
 
   useEffect(() => {
     startListeningInternalRef.current = startListeningInternal;
@@ -1320,15 +1163,59 @@ export function useVoiceMode({
     // Ref guards stop double-open before React re-renders (no duplicate intervals/sessions).
     if (openingRef.current) return;
     openingRef.current = true;
+
+    setMicPermissionDenied(false);
+    setError(null);
+    setPartialTranscript('');
+    setFinalTranscript('');
+
+    // 1) Preflight — HTTPS / getUserMedia support (no prompt yet).
+    const support = checkMicrophoneSupport();
+    if (!support.ok) {
+      setMicFailureReason(support.reason || 'unsupported');
+      setMicPermissionDenied(true);
+      openingRef.current = false;
+      return;
+    }
+
+    // 2) Request mic IMMEDIATELY in the user-gesture turn.
+    //    Android Chrome / Safari revoke gesture after network awaits.
+    //    Reuse an already-live track (e.g. after retry) to avoid a second prompt.
+    const existingTrack = mediaStreamRef.current?.getAudioTracks?.()?.[0];
+    const canReuseStream =
+      !!mediaStreamRef.current &&
+      existingTrack &&
+      existingTrack.readyState === 'live';
+
+    if (!canReuseStream) {
+      setMicRequesting(true);
+      try {
+        stopMediaStream(mediaStreamRef.current);
+        mediaStreamRef.current = null;
+        mediaStreamRef.current = await requestMicrophoneStream();
+      } catch (err) {
+        await surfaceMicFailure(err);
+        openingRef.current = false;
+        return;
+      } finally {
+        if (mountedRef.current) setMicRequesting(false);
+      }
+    }
+
+    if (!mountedRef.current) {
+      stopMediaStream(mediaStreamRef.current);
+      mediaStreamRef.current = null;
+      openingRef.current = false;
+      return;
+    }
+
+    // 3) Only after mic is granted — enter Live Mode and create session.
     isLiveRef.current = true;
     engineRef.current.setLive(true);
     setIsLive(true);
     setPresentation('expanded');
     presentationRef.current = 'expanded';
     setPhase('connecting');
-    setError(null);
-    setPartialTranscript('');
-    setFinalTranscript('');
     setTurns([]);
     resetLevels();
 
@@ -1362,9 +1249,7 @@ export function useVoiceMode({
       setSessionId(session.id);
       if (serverVoices?.length) setVoices(serverVoices);
 
-      ensurePlayback();
-
-      // Open duplex WebSocket for streaming STT/TTS (HTTP remains as fallback).
+      // Open duplex WebSocket for streaming STT (HTTP remains as fallback).
       try {
         const sock = new VoiceSocket();
         voiceSocketRef.current = sock;
@@ -1381,9 +1266,10 @@ export function useVoiceMode({
             ) {
               setSocketConnected(false);
               setError(
-                ev.type === 'error'
-                  ? ev.message
-                  : 'Voice connection lost after network interruptions. Mic streaming may be limited.'
+                toUserFacingError(
+                  ev.type === 'error' ? ev.message : null,
+                  'Voice connection interrupted. You can keep talking — replies may be slower.'
+                )
               );
             }
           } else if (ev.type === 'transcript.partial' && phaseRef.current === 'listening') {
@@ -1393,8 +1279,9 @@ export function useVoiceMode({
           }
         });
         await sock.connect(session.id);
-      } catch {
+      } catch (wsErr) {
         // WS optional — HTTP STT/TTS still works.
+        console.error('[voice] WebSocket connect failed (HTTP fallback)', wsErr);
         voiceSocketRef.current = null;
         if (mountedRef.current) setSocketConnected(false);
       }
@@ -1404,14 +1291,59 @@ export function useVoiceMode({
       setSettings((s) => ({ ...s, mode: 'hands-free' }));
       await startListeningInternalRef.current();
     } catch (err) {
+      console.error('[voice] openVoiceMode failed', err);
       if (mountedRef.current) {
-        setError(err instanceof Error ? err.message : 'Unable to start Live Mode');
+        setError(
+          toUserFacingError(
+            err,
+            "Couldn't start Voice Mode. Please try again."
+          )
+        );
         setPhase('error');
+        // Keep Live UI so the user can read the error and tap End → text chat.
       }
     } finally {
       openingRef.current = false;
     }
-  }, [chatId, projectId, ensurePlayback, resetLevels]);
+  }, [chatId, projectId, resetLevels, surfaceMicFailure]);
+
+  const dismissMicPermissionDenied = useCallback(() => {
+    setMicPermissionDenied(false);
+    setMicRequesting(false);
+  }, []);
+
+  const retryMicrophone = useCallback(async () => {
+    // After user changes browser settings, re-request from a fresh tap.
+    setMicPermissionDenied(false);
+    setError(null);
+    setMicRequesting(true);
+    try {
+      const support = checkMicrophoneSupport();
+      if (!support.ok) {
+        setMicFailureReason(support.reason || 'unsupported');
+        setMicPermissionDenied(true);
+        return;
+      }
+      stopMediaStream(mediaStreamRef.current);
+      mediaStreamRef.current = null;
+      mediaStreamRef.current = await requestMicrophoneStream();
+      setMicPermissionDenied(false);
+      // Mic granted — start (or resume) voice mode.
+      if (!isLiveRef.current) {
+        setMicRequesting(false);
+        await openVoiceMode();
+        return;
+      }
+      setPresentation('expanded');
+      presentationRef.current = 'expanded';
+      setPhase('connecting');
+      await startListeningInternalRef.current();
+    } catch (err) {
+      await surfaceMicFailure(err);
+    } finally {
+      if (mountedRef.current) setMicRequesting(false);
+    }
+  }, [openVoiceMode, surfaceMicFailure]);
 
   const minimizeVoiceMode = useCallback(() => {
     if (!isLiveRef.current) return;
@@ -1445,7 +1377,6 @@ export function useVoiceMode({
     stopGeneratingRef.current();
     speakBufferRef.current = '';
     spokenOffsetRef.current = Number.MAX_SAFE_INTEGER;
-    ttsViaSocketRef.current = false;
     if (lastAssistantIdRef.current) {
       engineRef.current.markAssistantHandled(lastAssistantIdRef.current);
       spokenAssistantIdRef.current = lastAssistantIdRef.current;
@@ -1503,7 +1434,6 @@ export function useVoiceMode({
       speakerOnRef.current = next;
       settingsRef.current = { ...settingsRef.current, speakerOn: next };
       setSettings((s) => ({ ...s, speakerOn: next }));
-      playbackRef.current?.setSpeakerOn(next);
       if (!next) stopSpeaking();
       return next;
     });
@@ -1540,13 +1470,10 @@ export function useVoiceMode({
       }
       if (typeof patch.volume === 'number') {
         setVolume(patch.volume);
-        playbackRef.current?.setVolume(patch.volume);
-        mp3QueueRef.current?.setVolume(patch.volume);
       }
       if (typeof patch.speakerOn === 'boolean') {
         speakerOnRef.current = patch.speakerOn;
         setSpeakerOn(patch.speakerOn);
-        playbackRef.current?.setSpeakerOn(patch.speakerOn);
       }
       voiceSocketRef.current?.updateConfig({
         voice: next.voice,
@@ -1565,7 +1492,8 @@ export function useVoiceMode({
       recognitionRef.current?.setLanguage(next.language);
       return next;
     });
-  }, []);
+    if (patch.speakerOn === false) stopSpeaking();
+  }, [stopSpeaking]);
 
   /** Push-to-talk: press */
   const beginPushToTalk = useCallback(async () => {
@@ -1573,7 +1501,7 @@ export function useVoiceMode({
     if (mutedRef.current || !isLiveRef.current) return;
     pushToTalkActiveRef.current = true;
     // Interrupt AI if speaking.
-    if (phaseRef.current === 'speaking' || playbackRef.current?.isPlaying || mp3QueueRef.current?.isPlaying) {
+    if (phaseRef.current === 'speaking' || isNativeTtsPlaying()) {
       await interrupt();
     }
     setFinalTranscript('');
@@ -1603,43 +1531,57 @@ export function useVoiceMode({
   }, [chatId]);
 
   // Allow interrupting by starting to speak while AI talks (hands-free barge-in).
-  // Mic stays open with echoCancellation so speaker output is suppressed from the mic.
+  // Mic stays open with echoCancellation; VAD is heavily desensitized + hold-off
+  // so speaker echo / room noise does not abort the in-flight chat fetch.
   useEffect(() => {
     if (!isLive || muted || settings.mode !== 'hands-free') return;
-    if (phase !== 'speaking' && phase !== 'processing') return;
+    // Only while TTS is playing — do not arm during "processing"/thinking or
+    // ambient noise will interrupt() and abort the active /chat stream.
+    if (phase !== 'speaking') return;
 
     let stopped = false;
     let bargeIn: VoiceActivityDetector | null = null;
 
     const arm = async () => {
       // Ensure mic + AEC are live before arming barge-in.
+      // Never auto-prompt here if permission isn't already granted — barge-in
+      // only runs during an active Live session that already obtained the mic.
       if (!mediaStreamRef.current) {
         try {
-          mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
-            audio: VOICE_AUDIO_CONSTRAINTS,
-          });
-        } catch {
+          mediaStreamRef.current = await requestMicrophoneStream();
+        } catch (err) {
+          console.error('[voice] barge-in mic unavailable', err);
           return;
         }
       } else {
-        await ensureEchoCancellation(mediaStreamRef.current);
+        await ensureEchoCancellation(mediaStreamRef.current).catch(() => undefined);
       }
       if (stopped || !mediaStreamRef.current) return;
 
       bargeIn = new VoiceActivityDetector({
-        // Higher than listen VAD to reject speaker echo; still fast barge-in.
-        threshold: 0.028,
-        minSpeechMs: 140,
-        startFrames: 3,
+        // Much higher than listen VAD — reject speaker echo / keyboard noise.
+        threshold: 0.055,
+        minSpeechMs: 280,
+        startFrames: 10,
         silenceMs: 10_000,
         onSpeechStart: () => {
-          if (!stopped) void interrupt();
+          if (!stopped) void interrupt().catch(() => undefined);
         },
       });
-      await bargeIn.start(mediaStreamRef.current);
+      try {
+        await bargeIn.start(mediaStreamRef.current);
+        // Hold off while TTS onset / room echo peaks — real barge-in is sustained.
+        bargeIn.ignoreSpeechFor(850);
+      } catch (err) {
+        console.error('[voice] barge-in VAD failed', err);
+        bargeIn.stop();
+        bargeIn = null;
+      }
     };
 
-    void arm();
+    void arm().catch((err) => {
+      console.error('[voice] barge-in arm failed', err);
+    });
     return () => {
       stopped = true;
       bargeIn?.stop();
@@ -1660,6 +1602,9 @@ export function useVoiceMode({
     levels,
     outputLevel,
     error,
+    micPermissionDenied,
+    micFailureReason,
+    micRequesting,
     muted,
     speakerOn,
     volume,
@@ -1667,6 +1612,8 @@ export function useVoiceMode({
     sessionId,
     socketConnected,
     openVoiceMode,
+    retryMicrophone,
+    dismissMicPermissionDenied,
     minimizeVoiceMode,
     expandVoiceMode,
     closeVoiceMode,

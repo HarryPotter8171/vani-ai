@@ -95,6 +95,14 @@ export class VoiceSocket {
 
     const token = await getAccessToken();
     if (this.closed) return;
+    if (!token) {
+      this.emit({
+        type: 'error',
+        message: 'Unable to sign in. Please try again.',
+        code: 'AUTH_REQUIRED',
+      });
+      return;
+    }
 
     await this.openSocket(token, this.sessionId);
   }
@@ -121,8 +129,20 @@ export class VoiceSocket {
       }
       const ws = new WebSocket(wsHref);
       this.ws = ws;
+      let opened = false;
+      let settled = false;
+
+      const fail = (message: string) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(message));
+      };
 
       const onOpen = () => {
+        opened = true;
+        if (settled) return;
+        settled = true;
         cleanup();
         this.reconnectAttempts = 0;
         this.startPing();
@@ -130,8 +150,15 @@ export class VoiceSocket {
         resolve();
       };
       const onError = () => {
-        cleanup();
-        reject(new Error('Voice WebSocket connection failed'));
+        // Browser hides the real cause; prefer close code/reason when it arrives.
+        // If close never fires (e.g. CSP), reject with a generic hint.
+        window.setTimeout(() => {
+          if (!opened && !settled) {
+            fail(
+              'Voice WebSocket connection failed (blocked before open — check CSP connect-src allows ws:// to the API host, or that the backend is reachable)'
+            );
+          }
+        }, 0);
       };
       const cleanup = () => {
         ws.removeEventListener('open', onOpen);
@@ -154,6 +181,13 @@ export class VoiceSocket {
         this.stopPing();
         this.ws = null;
         this.emit({ type: 'close', code: ev.code, reason: ev.reason });
+        if (!opened) {
+          const reason = ev.reason?.trim() || 'no reason';
+          fail(
+            `Voice WebSocket closed before open (code=${ev.code}, reason=${reason})`
+          );
+          return;
+        }
         if (!this.intentionalClose && !this.closed && this.sessionId) {
           this.scheduleReconnect();
         }
@@ -184,7 +218,7 @@ export class VoiceSocket {
       });
       this.emit({
         type: 'error',
-        message: 'Voice connection lost. Streaming mic may be unavailable — HTTP fallback still works.',
+        message: 'Voice connection interrupted. You can keep talking — replies may be slower.',
         code: 'WS_RECONNECT_EXHAUSTED',
       });
       return;

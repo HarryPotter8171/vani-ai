@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/Button';
 import { Input, Textarea, Select, SearchInput } from '@/components/ui/Input';
 import { PremiumEmpty } from '@/components/ui/PremiumEmpty';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { SkeletonList } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/Toast';
@@ -627,10 +628,7 @@ export default function MemoryManager({ open, onClose, chatId = null }: MemoryMa
                     </AnimatePresence>
 
                     {memory.isLoading && !memory.memories.length ? (
-                      <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground/50">
-                        <Sparkles size={18} className="animate-pulse" />
-                        <span className="text-sm">Loading memories…</span>
-                      </div>
+                      <SkeletonList rows={5} className="py-4" />
                     ) : memory.error ? (
                       <ErrorState
                         compact

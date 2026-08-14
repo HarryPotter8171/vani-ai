@@ -174,7 +174,10 @@ export const runResearch = async (req, res) => {
           },
         });
         if (!result.ok) {
-          send({ type: "error", error: result.error });
+          send({
+            type: "error",
+            error: "We couldn't complete your research right now.",
+          });
           send({ type: "done", done: true });
           return res.end();
         }
@@ -287,7 +290,10 @@ export const runResearch = async (req, res) => {
     }
   } catch (err) {
     console.error("[research] run failed:", err);
-    send({ type: "error", error: err.message || "Research failed" });
+    send({
+      type: "error",
+      error: "We couldn't complete your research right now.",
+    });
     send({ type: "done", done: true });
   }
 

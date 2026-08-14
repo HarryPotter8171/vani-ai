@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { buildShareUrl, disableSharing, enableSharing, fetchShareStatus } from '@/lib/share';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 /**
  * Manages the public-share toggle for a single chat. Status is loaded
@@ -52,7 +53,9 @@ export function useShareChat(chatId: string | null) {
       .catch((err) => {
         if (requestId !== requestIdRef.current) return;
         loadedForRef.current = null; // allow retrying on next open
-        setError((err as Error).message || 'Unable to load share status');
+        setError(
+          getUserFriendlyError(err, { fallback: 'Unable to load share status' })
+        );
       })
       .finally(() => {
         if (requestId === requestIdRef.current) setIsLoadingStatus(false);
@@ -68,7 +71,11 @@ export function useShareChat(chatId: string | null) {
       setIsShared(status.isShared);
       setShareId(status.shareId);
     } catch (err) {
-      setError((err as Error).message || 'Unable to share this conversation');
+      setError(
+        getUserFriendlyError(err, {
+          fallback: 'Unable to share this conversation',
+        })
+      );
     } finally {
       setIsToggling(false);
     }
@@ -82,7 +89,11 @@ export function useShareChat(chatId: string | null) {
       const status = await disableSharing(chatId);
       setIsShared(status.isShared);
     } catch (err) {
-      setError((err as Error).message || 'Unable to revoke this share link');
+      setError(
+        getUserFriendlyError(err, {
+          fallback: 'Unable to revoke this share link',
+        })
+      );
     } finally {
       setIsToggling(false);
     }

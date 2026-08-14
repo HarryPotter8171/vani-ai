@@ -36,14 +36,14 @@ export default function DynamicHome(_props: DynamicHomeProps) {
       initial={{ opacity: 0, y: 0 }}
       animate={{ opacity: 1, y: -14 }}
       transition={{ duration: 0.4, ease: EASE.smooth }}
-      className="mx-auto w-full max-w-[800px] px-0"
+      className="mx-auto w-full max-w-full px-1 sm:px-0 md:max-w-3xl lg:max-w-[800px]"
     >
-      <div className="flex flex-col items-center text-center">
+      <div className="flex flex-col items-center px-2 text-center max-md:pt-2 sm:px-0">
         <motion.div
           initial={{ opacity: 0, scale: 0.88, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ ...SPRING.gentle, delay: 0.02 }}
-          className="mb-5"
+          className="mb-4 max-md:mb-3 md:mb-5"
         >
           <VaniOrb state="idle" size={64} glow />
         </motion.div>
@@ -63,7 +63,10 @@ export default function DynamicHome(_props: DynamicHomeProps) {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.38, ease: EASE.smooth, delay: 0.1 }}
-          className={cn('type-heading text-foreground')}
+          className={cn(
+            'type-heading text-foreground',
+            'max-md:text-[clamp(1.35rem,5.5vw,1.75rem)] max-md:leading-tight'
+          )}
         >
           {greeting}
         </motion.h1>
@@ -72,7 +75,7 @@ export default function DynamicHome(_props: DynamicHomeProps) {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.36, ease: EASE.smooth, delay: 0.16 }}
-          className="mt-3 max-w-md text-body font-medium leading-relaxed tracking-[-0.015em] text-text-secondary"
+          className="mt-3 max-w-md px-2 text-body font-medium leading-relaxed tracking-[-0.015em] text-text-secondary max-md:mt-2 max-md:text-sm"
         >
           What would you like to work on today?
         </motion.p>

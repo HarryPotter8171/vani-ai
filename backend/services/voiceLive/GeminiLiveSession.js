@@ -9,6 +9,7 @@ import { Modality } from "@google/genai";
 import { getGeminiLiveClient } from "../geminiLiveClient.js";
 import { sanitizeIdentityResponse } from "../identity/IdentityGuard.js";
 import { logger } from "../../utils/logger.js";
+import { publicFeatureError } from "../../utils/errors.js";
 import {
   LIVE_MODEL,
   LIVE_INPUT_MIME,
@@ -67,7 +68,9 @@ export class GeminiLiveSession {
 
     const ai = this._getClient();
     if (!ai?.live?.connect) {
-      const err = new Error("Gemini Live client does not expose live.connect().");
+      const err = new Error(
+        "This feature is temporarily unavailable. Please try again later."
+      );
       err.code = "LIVE_CLIENT_UNAVAILABLE";
       throw err;
     }
@@ -101,8 +104,8 @@ export class GeminiLiveSession {
         },
         onmessage: (message) => this._handleServerMessage(message),
         onerror: (e) => {
-          const message = e?.message || "Gemini Live socket error.";
-          logger.warn({ err: message }, "[voice-live] gemini session error");
+          const message = publicFeatureError("voice", e?.message);
+          logger.warn({ err: e?.message }, "[voice-live] gemini session error");
           this._emit({ type: "error", message, code: "LIVE_SOCKET_ERROR" });
         },
         onclose: (e) => {
@@ -219,7 +222,8 @@ export class GeminiLiveSession {
       if (message.goAway) {
         this._emit({
           type: "error",
-          message: "Gemini Live server goAway — reconnect required.",
+          message:
+            "Voice connection interrupted. Please try again.",
           code: "LIVE_GO_AWAY",
           timeLeft: message.goAway.timeLeft,
         });

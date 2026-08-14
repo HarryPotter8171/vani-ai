@@ -24,6 +24,7 @@ import {
   upsertProjectMemory,
 } from "../services/projectMemoryService.js";
 import { searchKnowledgeBase } from "../services/ragService.js";
+import { toPublicErrorMessage } from "../utils/errors.js";
 
 /** Authenticated user from requireAuth — never trust client identity. */
 function resolveUser(req) {
@@ -43,7 +44,7 @@ function handleError(res, err, fallback = "Request failed") {
         ? 400
         : 500;
   if (status >= 500) console.error(err);
-  return res.status(status).json({ error: err.message || fallback });
+  return res.status(status).json({ error: toPublicErrorMessage(err, fallback) });
 }
 
 export const create = async (req, res) => {

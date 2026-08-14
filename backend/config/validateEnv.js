@@ -1,5 +1,10 @@
 import fs from "fs";
 import { logger } from "../utils/logger.js";
+import {
+  CANONICAL_MONGO_URI_ENV,
+  listSetMongoUriEnvVars,
+  validateMongoUriConfig,
+} from "./mongoUri.js";
 
 const MIN_SECRET_LENGTH = 32;
 const WEAK_SECRET_PATTERNS = [
@@ -52,7 +57,25 @@ const RULES = [
   {
     name: "MONGODB_URI",
     check: () => !!process.env.MONGODB_URI,
-    hint: "Set MONGODB_URI — required for all persistence (chats, users, memory, files).",
+    hint: "Set MONGODB_URI — required for all persistence (chats, users, memory, files). Do not use MONGO_URI or DATABASE_URL.",
+  },
+  {
+    // Reject alias env vars so only MONGODB_URI is ever read.
+    name: "Mongo URI env aliases (MONGO_URI / DATABASE_URL must be unset)",
+    check: () => {
+      const set = listSetMongoUriEnvVars();
+      const aliases = set.filter((n) => n !== CANONICAL_MONGO_URI_ENV);
+      return aliases.length === 0;
+    },
+    hint: "Unset MONGO_URI and DATABASE_URL — this app only reads MONGODB_URI.",
+  },
+  {
+    name: "MONGODB_URI format",
+    check: () => {
+      if (!process.env.MONGODB_URI) return true; // covered by presence rule
+      return validateMongoUriConfig().ok;
+    },
+    hint: "MONGODB_URI must be a valid mongodb:// or mongodb+srv:// URI. Percent-encode special characters in the password. Fix malformed strings before boot.",
   },
   {
     name: "GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION",
@@ -74,7 +97,7 @@ const RULES = [
         return false;
       }
     },
-    hint: "GOOGLE_APPLICATION_CREDENTIALS is set but not a readable file. Point it at a valid service-account JSON, or unset it to use ambient/workload-identity credentials.",
+    hint: "GOOGLE_APPLICATION_CREDENTIALS is set but not a readable file. Point it at a valid service-account JSON, set GOOGLE_APPLICATION_CREDENTIALS_JSON (Railway/PaaS) so boot materialises a temp file, or unset both to use ambient/workload-identity credentials.",
   },
   {
     name: "TAVILY_API_KEY",

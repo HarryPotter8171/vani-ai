@@ -16,6 +16,7 @@ import {
   MEMORY_CATEGORIES,
 } from "../services/memory/index.js";
 import { retrieveRelevantMemories } from "../services/memory/memoryRetriever.js";
+import { toPublicErrorMessage } from "../utils/errors.js";
 
 /** Authenticated user from requireAuth — never trust client identity. */
 function resolveUser(req) {
@@ -38,7 +39,7 @@ export const getSettings = async (req, res) => {
     res.json(settings);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message || "Unable to load memory settings" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to load memory settings") });
   }
 };
 
@@ -49,7 +50,7 @@ export const patchSettings = async (req, res) => {
     res.json(settings);
   } catch (err) {
     console.error(err);
-    res.status(400).json({ error: err.message || "Unable to update memory settings" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to update memory settings") });
   }
 };
 
@@ -67,7 +68,7 @@ export const list = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message || "Unable to list memories" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list memories") });
   }
 };
 
@@ -125,7 +126,7 @@ export const create = async (req, res) => {
     console.error(err);
     const status = err.status || (err.code === "MEMORY_DISABLED" ? 403 : 400);
     res.status(status).json({
-      error: err.message || "Unable to create memory",
+      error: toPublicErrorMessage(err, "Unable to create memory"),
       ...(err.code ? { code: err.code } : {}),
     });
   }
@@ -139,7 +140,7 @@ export const update = async (req, res) => {
   } catch (err) {
     console.error(err);
     const status = err.message === "Memory not found" ? 404 : 400;
-    res.status(status).json({ error: err.message || "Unable to update memory" });
+    res.status(status).json({ error: toPublicErrorMessage(err, "Unable to update memory") });
   }
 };
 
@@ -168,7 +169,7 @@ export const forget = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error(err);
-    res.status(400).json({ error: err.message || "Unable to forget memory" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to forget memory") });
   }
 };
 
@@ -218,7 +219,7 @@ export const summarize = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error(err);
-    res.status(400).json({ error: err.message || "Unable to summarize chat" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to summarize chat") });
   }
 };
 

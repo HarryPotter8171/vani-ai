@@ -126,9 +126,12 @@ export default function ModelSelector({
         onClick={() => setOpen((v) => !v)}
         className={cn(
           'inline-flex h-8 items-center gap-1.5 rounded-full px-2.5',
+          /* Icon-only on phones so mic/send stay visible */
+          'max-md:h-11 max-md:w-11 max-md:justify-center max-md:gap-0 max-md:px-0',
           'text-sm font-medium tracking-[-0.01em]',
           'transition-all duration-normal ease-apple',
           'text-text-secondary hover:bg-surface-hover hover:text-foreground',
+          'touch-manipulation',
           open && 'bg-surface-hover text-foreground',
           'disabled:opacity-50'
         )}
@@ -145,7 +148,7 @@ export default function ModelSelector({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={SPRING.snappy}
-            className="max-w-[9rem] truncate"
+            className="max-w-[9rem] truncate max-md:hidden"
           >
             {label}
           </motion.span>
@@ -154,7 +157,7 @@ export default function ModelSelector({
           size={13}
           strokeWidth={1.75}
           className={cn(
-            'opacity-50 transition-transform duration-normal ease-spring',
+            'opacity-50 transition-transform duration-normal ease-spring max-md:hidden',
             open && 'rotate-180'
           )}
         />

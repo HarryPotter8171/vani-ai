@@ -101,10 +101,7 @@ export class RazorpayService {
     const keyId = getRazorpayKeyId();
     const keySecret = getRazorpayKeySecret();
     if (!keyId || !keySecret) {
-      throw httpError(
-        "Razorpay is not configured (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET)",
-        503
-      );
+      throw httpError("Billing is temporarily unavailable.", 503);
     }
     if (!razorpayClient) {
       razorpayClient = new Razorpay({
@@ -128,7 +125,7 @@ export class RazorpayService {
   ): boolean {
     const secret = getRazorpayWebhookSecret();
     if (!secret) {
-      throw httpError("RAZORPAY_WEBHOOK_SECRET is not configured", 503);
+      throw httpError("Billing is temporarily unavailable.", 503);
     }
     const body =
       typeof rawBody === "string" ? rawBody : rawBody.toString("utf8");
@@ -247,7 +244,7 @@ export class RazorpayService {
     const planId = getRazorpayPlanId(opts.planId, opts.interval);
     if (!planId) {
       throw httpError(
-        `Razorpay plan not configured for ${opts.planId}/${opts.interval}`,
+        `Selected plan is temporarily unavailable.`,
         503
       );
     }
@@ -319,7 +316,7 @@ export class RazorpayService {
     const planId = getRazorpayPlanId(opts.planId, opts.interval);
     if (!planId) {
       throw httpError(
-        `Razorpay plan not configured for ${opts.planId}/${opts.interval}`,
+        `Selected plan is temporarily unavailable.`,
         503
       );
     }

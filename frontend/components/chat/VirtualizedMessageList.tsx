@@ -3,11 +3,11 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import Message from '@/components/Message';
 import type { Artifact } from '@/lib/artifacts';
-import type { Message as ChatMessage } from '@/lib/types';
+import type { Message as ChatMessage, MessageFeedback } from '@/lib/types';
 import type { TtsState } from '@/components/chat/MessageActions';
 
 /** Below this count, mount every row (short threads stay simple). */
-const VIRTUALIZE_AFTER = 40;
+const VIRTUALIZE_AFTER = 30;
 const ESTIMATED_ROW_PX = 128;
 const OVERSCAN_PX = 900;
 
@@ -22,6 +22,17 @@ export interface VirtualizedMessageListProps {
   onForgetMemory?: (content: string) => void;
   onRegenerate?: (messageId: string) => void;
   onContinue?: (messageId: string) => void;
+  onRetry?: (messageId: string) => void;
+  onEditPrompt?: (messageId: string) => void;
+  onEditAndResend?: (messageId: string, newContent: string) => void;
+  onFeedback?: (messageId: string, value: MessageFeedback | null) => void;
+  onOpenInCanvas?: (messageId: string, content: string) => void;
+  onShareMessage?: (messageId: string, content: string) => void;
+  onPinMessage?: (messageId: string) => void;
+  onSaveResponse?: (messageId: string, content: string) => void;
+  onExportMarkdown?: (messageId: string, content: string) => void;
+  onExportPdf?: (messageId: string, content: string) => void;
+  onDeleteResponse?: (messageId: string) => void;
   regenerateDisabled?: boolean;
   ttsMessageId?: string | null;
   ttsState?: TtsState;
@@ -40,7 +51,13 @@ function buildRows(messages: ChatMessage[]): { rows: Row[]; messageIndexById: Ma
   const messageIndexById = new Map<string, number>();
   for (const msg of messages) {
     // Empty streaming placeholder is represented by TypingIndicator instead.
-    if (msg.role === 'assistant' && msg.isStreaming && msg.content === '') {
+    // Failed empty messages still render (error card).
+    if (
+      msg.role === 'assistant' &&
+      msg.isStreaming &&
+      msg.content === '' &&
+      msg.status !== 'error'
+    ) {
       continue;
     }
     messageIndexById.set(msg.id, rows.length);
@@ -67,6 +84,17 @@ function VirtualizedMessageListInner({
   onForgetMemory,
   onRegenerate,
   onContinue,
+  onRetry,
+  onEditPrompt,
+  onEditAndResend,
+  onFeedback,
+  onOpenInCanvas,
+  onShareMessage,
+  onPinMessage,
+  onSaveResponse,
+  onExportMarkdown,
+  onExportPdf,
+  onDeleteResponse,
   regenerateDisabled,
   ttsMessageId,
   ttsState = 'idle',
@@ -78,7 +106,8 @@ function VirtualizedMessageListInner({
   const { rows } = useMemo(() => buildRows(messages), [messages]);
   const [heights, setHeights] = useState<Map<number, number>>(() => new Map());
   const [windowRange, setWindowRange] = useState({ start: 0, end: rows.length });
-
+  /** When Edit Prompt is chosen on an assistant turn, open the prior user bubble. */
+  const [forceEditUserId, setForceEditUserId] = useState<string | null>(null);
   const shouldVirtualize = rows.length > VIRTUALIZE_AFTER;
 
   // Stale height maps from a previous thread cause padTop/padBottom drift and
@@ -86,6 +115,7 @@ function VirtualizedMessageListInner({
   useEffect(() => {
     setHeights(new Map());
     setWindowRange({ start: 0, end: rows.length });
+    setForceEditUserId(null);
   }, [threadKey]); // eslint-disable-line react-hooks/exhaustive-deps -- only on thread change
 
   const lastAssistantId = useMemo(() => {
@@ -93,6 +123,22 @@ function VirtualizedMessageListInner({
       if (messages[i].role === 'assistant') return messages[i].id;
     }
     return null;
+  }, [messages]);
+
+  /** Preceding user message id for each assistant message — powers Edit Prompt. */
+  const precedingUserIdByAssistant = useMemo(() => {
+    const map = new Map<string, string>();
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role !== 'assistant') continue;
+      for (let j = i - 1; j >= 0; j -= 1) {
+        if (messages[j].role === 'user') {
+          map.set(m.id, messages[j].id);
+          break;
+        }
+      }
+    }
+    return map;
   }, [messages]);
 
   const totalHeight = useMemo(() => {
@@ -178,6 +224,16 @@ function VirtualizedMessageListInner({
     });
   }, []);
 
+  const handleEditPrompt = useCallback(
+    (assistantMessageId: string) => {
+      const userId = precedingUserIdByAssistant.get(assistantMessageId);
+      if (!userId) return;
+      setForceEditUserId(userId);
+      onEditPrompt?.(userId);
+    },
+    [precedingUserIdByAssistant, onEditPrompt]
+  );
+
   const renderMessage = (msg: ChatMessage) => (
     <Message
       id={msg.id}
@@ -185,6 +241,9 @@ function VirtualizedMessageListInner({
       content={msg.content}
       isStreaming={msg.isStreaming}
       wasInterrupted={msg.wasInterrupted}
+      status={msg.status}
+      feedback={msg.feedback}
+      pinned={msg.pinned}
       attachments={msg.attachments}
       meta={msg.meta}
       usage={msg.usage}
@@ -192,12 +251,38 @@ function VirtualizedMessageListInner({
       onOpenArtifact={onOpenArtifact}
       onArtifactsDetected={onArtifactsDetected}
       onForgetMemory={onForgetMemory}
+      isLatestAssistant={msg.id === lastAssistantId}
       onRegenerate={
         onRegenerate && msg.id === lastAssistantId
           ? onRegenerate
           : undefined
       }
+      onRetry={
+        onRetry && msg.id === lastAssistantId && msg.status === 'error'
+          ? onRetry
+          : onRegenerate && msg.id === lastAssistantId && msg.status === 'error'
+            ? onRegenerate
+            : undefined
+      }
       onContinue={onContinue}
+      onEditPrompt={
+        msg.role === 'assistant' && (onEditPrompt || onEditAndResend)
+          ? handleEditPrompt
+          : undefined
+      }
+      onEditAndResend={
+        msg.role === 'user' ? onEditAndResend : undefined
+      }
+      forceEditing={msg.role === 'user' && forceEditUserId === msg.id}
+      onForceEditingConsumed={() => setForceEditUserId(null)}
+      onFeedback={onFeedback}
+      onOpenInCanvas={onOpenInCanvas}
+      onShareMessage={onShareMessage}
+      onPinMessage={onPinMessage}
+      onSaveResponse={onSaveResponse}
+      onExportMarkdown={onExportMarkdown}
+      onExportPdf={onExportPdf}
+      onDeleteResponse={onDeleteResponse}
       regenerateDisabled={regenerateDisabled}
       ttsState={ttsMessageId === msg.id ? ttsState : 'idle'}
       ttsParagraphIndex={ttsMessageId === msg.id ? ttsParagraphIndex : -1}

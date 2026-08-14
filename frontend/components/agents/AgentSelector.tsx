@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { createPortal } from 'react-dom';
 import {
   BarChart3,
   Bot,
@@ -14,7 +15,9 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { EASE, SPRING } from '@/lib/motion';
 import { PremiumEmpty } from '@/components/ui/PremiumEmpty';
+import { useIsDesktop } from '@/hooks/useMediaQuery';
 import type { AgentTypeId, AgentTypeInfo } from '@/lib/agents';
 
 const PRIMARY_IDS: AgentTypeId[] = [
@@ -93,6 +96,91 @@ export interface AgentSelectorProps {
   disabled?: boolean;
 }
 
+function AgentList({
+  primary,
+  selectedAgent,
+  onPick,
+  dense,
+}: {
+  primary: AgentTypeInfo[];
+  selectedAgent: AgentTypeId | null;
+  onPick: (id: AgentTypeId | null) => void;
+  dense?: boolean;
+}) {
+  return (
+    <>
+      {CATEGORIES.map((cat) => {
+        const catAgents = primary.filter((a) =>
+          cat.agents.length ? cat.agents.includes(a.id) : false
+        );
+        if (!catAgents.length && cat.id !== 'creative') return null;
+
+        return (
+          <div key={cat.id} className={cn('px-1.5 py-1', !dense && 'px-2')}>
+            <div className="px-3 pb-1 pt-1.5 text-micro font-semibold uppercase tracking-[0.07em] text-text-tertiary">
+              {cat.label}
+            </div>
+            {cat.id === 'creative' ? (
+              <PremiumEmpty
+                size="sm"
+                icon={Sparkles}
+                title="Creative agents coming soon"
+                className="mx-1.5 mb-1 rounded-[12px] border border-dashed border-border py-4"
+              />
+            ) : (
+              catAgents.map((agent) => {
+                const meta = AGENT_META[agent.id];
+                const Icon = meta?.icon || Bot;
+                const name = SHORT_NAMES[agent.id] || agent.name;
+                const active =
+                  agent.id === 'general'
+                    ? selectedAgent === null || selectedAgent === 'general'
+                    : selectedAgent === agent.id;
+
+                return (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => onPick(agent.id === 'general' ? null : agent.id)}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-[14px] px-3 text-left',
+                      'transition-colors duration-fast ease-apple touch-manipulation',
+                      dense ? 'min-h-[52px] py-2.5' : 'min-h-[56px] py-3',
+                      active ? 'bg-accent-muted' : 'hover:bg-surface-hover active:bg-surface-hover'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]',
+                        active
+                          ? 'bg-accent/20 text-accent'
+                          : 'bg-surface-hover text-text-secondary'
+                      )}
+                    >
+                      <Icon size={17} strokeWidth={1.75} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold tracking-[-0.016em] text-foreground">
+                        {name}
+                      </span>
+                      <span className="mt-0.5 block text-caption leading-snug text-text-secondary">
+                        {meta?.blurb || agent.description}
+                      </span>
+                    </span>
+                    {active && <Check size={16} className="shrink-0 text-accent" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 export default function AgentSelector({
   agents,
   selectedAgent,
@@ -100,7 +188,9 @@ export default function AgentSelector({
   disabled,
 }: AgentSelectorProps) {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const isDesktop = useIsDesktop();
 
   const primary = useMemo(() => {
     const list = agents.filter((a) => PRIMARY_IDS.includes(a.id));
@@ -116,21 +206,30 @@ export default function AgentSelector({
     return list;
   }, [agents]);
 
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
     if (!open) return;
-    const onPointer = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
-    document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    if (!isDesktop) document.body.style.overflow = 'hidden';
     return () => {
-      document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
     };
-  }, [open]);
+  }, [open, isDesktop]);
+
+  useEffect(() => {
+    if (!open || !isDesktop) return;
+    const onPointer = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    return () => document.removeEventListener('mousedown', onPointer);
+  }, [open, isDesktop]);
 
   const displayName =
     selectedAgent && SHORT_NAMES[selectedAgent]
@@ -139,131 +238,147 @@ export default function AgentSelector({
         ? agents.find((a) => a.id === selectedAgent)?.name || 'General'
         : 'General';
 
+  const pick = (id: AgentTypeId | null) => {
+    onSelect(id);
+    setOpen(false);
+  };
+
+  const trigger = (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => setOpen((v) => !v)}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full px-3',
+        'h-11 max-md:min-w-[44px] max-md:justify-center max-md:gap-0 max-md:px-0 max-md:w-11 md:h-8 md:px-2.5',
+        'text-sm font-medium tracking-[-0.01em] touch-manipulation',
+        'transition-all duration-normal ease-apple',
+        'text-text-secondary hover:bg-surface-hover hover:text-foreground',
+        open && 'bg-surface-hover text-foreground',
+        'disabled:opacity-50'
+      )}
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      aria-label="Select agent"
+      data-testid="agent-selector"
+    >
+      <Bot size={14} strokeWidth={1.75} className="opacity-60" />
+      <span className="max-w-[6.5rem] truncate max-md:hidden">{displayName}</span>
+      <ChevronDown
+        size={13}
+        strokeWidth={1.75}
+        className={cn(
+          'opacity-50 transition-transform duration-normal ease-out max-md:hidden',
+          open && 'rotate-180'
+        )}
+      />
+    </button>
+  );
+
+  const header = (
+    <div className="border-b border-divider px-4 py-3">
+      <p className="text-micro font-semibold uppercase tracking-[0.06em] text-text-tertiary">
+        Agents
+      </p>
+      <p className="mt-0.5 text-caption text-text-secondary">
+        Specialized modes for how VANI thinks
+      </p>
+    </div>
+  );
+
   return (
     <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          'inline-flex h-8 items-center gap-1 rounded-full px-2.5',
-          'text-sm font-medium tracking-[-0.01em]',
-          'transition-all duration-normal ease-apple',
-          'text-text-secondary hover:bg-surface-hover hover:text-foreground',
-          open && 'bg-surface-hover text-foreground',
-          'disabled:opacity-50'
-        )}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="Select agent"
-        data-testid="agent-selector"
-      >
-        <Bot size={13} strokeWidth={1.75} className="opacity-60" />
-        <span className="max-w-[6.5rem] truncate">{displayName}</span>
-        <ChevronDown
-          size={13}
-          strokeWidth={1.75}
-          className={cn('opacity-50 transition-transform duration-normal ease-out', open && 'rotate-180')}
- />
-      </button>
+      {trigger}
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            role="listbox"
-            initial={{ opacity: 0, y: 8, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 4, scale: 0.98 }}
-            transition={DROPDOWN_TRANSITION}
-            className={cn(
-              'absolute bottom-full right-0 z-50 mb-2 w-[min(300px,calc(100vw-2rem))] overflow-hidden',
-              'rounded-[20px] menu-surface shadow-3'
-            )}
-          >
-            <div className="border-b border-divider px-4 py-3">
-              <p className="text-micro font-semibold uppercase tracking-[0.06em] text-text-tertiary">
-                Agents
-              </p>
-              <p className="mt-0.5 text-caption text-text-secondary">
-                Specialized modes for how VANI thinks
-              </p>
-            </div>
+      {/* Desktop: anchored dropdown (chat stays visible) */}
+      {isDesktop ? (
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              role="listbox"
+              initial={{ opacity: 0, y: 8, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 4, scale: 0.98 }}
+              transition={DROPDOWN_TRANSITION}
+              className={cn(
+                'absolute bottom-full right-0 z-50 mb-2 w-[min(300px,calc(100vw-2rem))] overflow-hidden',
+                'rounded-[20px] menu-surface shadow-3'
+              )}
+            >
+              {header}
+              <div className="max-h-[min(420px,55vh)] overflow-y-auto py-1.5">
+                <AgentList
+                  primary={primary}
+                  selectedAgent={selectedAgent}
+                  onPick={pick}
+                  dense
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      ) : null}
 
-            <div className="max-h-[min(420px,55vh)] overflow-y-auto py-1.5">
-              {CATEGORIES.map((cat) => {
-                const catAgents = primary.filter((a) =>
-                  cat.agents.length ? cat.agents.includes(a.id) : false
-                );
-                if (!catAgents.length && cat.id !== 'creative') return null;
-
-                return (
-                  <div key={cat.id} className="px-1.5 py-1">
-                    <div className="px-3 pb-1 pt-1.5 text-micro font-semibold uppercase tracking-[0.07em] text-text-tertiary">
-                      {cat.label}
-                    </div>
-                    {cat.id === 'creative' ? (
-                      <PremiumEmpty
-                        size="sm"
-                        icon={Sparkles}
-                        title="Creative agents coming soon"
-                        className="mx-1.5 mb-1 rounded-[12px] border border-dashed border-border py-4"
-                      />
-                    ) : (
-                      catAgents.map((agent) => {
-                        const meta = AGENT_META[agent.id];
-                        const Icon = meta?.icon || Bot;
-                        const name = SHORT_NAMES[agent.id] || agent.name;
-                        const active =
-                          agent.id === 'general'
-                            ? selectedAgent === null || selectedAgent === 'general'
-                            : selectedAgent === agent.id;
-
-                        return (
-                          <button
-                            key={agent.id}
-                            type="button"
-                            role="option"
-                            aria-selected={active}
-                            onClick={() => {
-                              onSelect(agent.id === 'general' ? null : agent.id);
-                              setOpen(false);
-                            }}
-                            className={cn(
-                              'flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5 text-left',
-                              'transition-colors duration-fast ease-apple',
-                              active ? 'bg-accent-muted' : 'hover:bg-surface-hover'
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                'flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px]',
-                                active
-                                  ? 'bg-accent/20 text-accent'
-                                  : 'bg-surface-hover text-text-secondary'
-                              )}
-                            >
-                              <Icon size={16} strokeWidth={1.75} />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block text-sm font-semibold tracking-[-0.016em] text-foreground">
-                                {name}
-                              </span>
-                              <span className="mt-0.5 block text-caption leading-snug text-text-secondary">
-                                {meta?.blurb || agent.description}
-                              </span>
-                            </span>
-                            {active && <Check size={15} className="shrink-0 text-accent" />}
-                          </button>
-                        );
-                      })
+      {/* Mobile: bottom sheet — chat remains visible behind scrim */}
+      {mounted && !isDesktop
+        ? createPortal(
+            <AnimatePresence>
+              {open ? (
+                <div className="fixed inset-0 z-[280]" role="presentation">
+                  <motion.button
+                    type="button"
+                    aria-label="Dismiss"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2, ease: EASE.apple }}
+                    className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+                    onClick={() => setOpen(false)}
+                  />
+                  <motion.div
+                    role="listbox"
+                    aria-label="Select agent"
+                    initial={{ y: '100%' }}
+                    animate={{ y: 0 }}
+                    exit={{ y: '100%' }}
+                    transition={SPRING.snappy}
+                    className={cn(
+                      'absolute inset-x-0 bottom-0 flex flex-col',
+                      'max-h-[min(78dvh,640px)]',
+                      'rounded-t-[22px] border border-border/70 border-b-0',
+                      'bg-surface-elevated shadow-[0_-8px_40px_rgba(0,0,0,0.28)]',
+                      'pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]'
                     )}
-                  </div>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                  >
+                    <div className="flex shrink-0 justify-center pt-3 pb-1" aria-hidden>
+                      <span className="h-1 w-9 rounded-full bg-foreground/15" />
+                    </div>
+                    <div className="shrink-0">{header}</div>
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1.5">
+                      <AgentList
+                        primary={primary}
+                        selectedAgent={selectedAgent}
+                        onPick={pick}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOpen(false)}
+                      className={cn(
+                        'mx-3 mt-1 mb-1 flex h-12 w-[calc(100%-1.5rem)] items-center justify-center',
+                        'rounded-full bg-surface-hover text-body font-semibold tracking-[-0.016em]',
+                        'text-foreground active:scale-[0.985] transition-transform touch-manipulation'
+                      )}
+                    >
+                      Cancel
+                    </button>
+                  </motion.div>
+                </div>
+              ) : null}
+            </AnimatePresence>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

@@ -86,7 +86,7 @@ export function createGeminiProvider(): ProviderAdapter {
           provider: "gemini",
           configured: false,
           healthy: false,
-          error: "GOOGLE_CLOUD_PROJECT/LOCATION not set",
+          error: "not configured",
           checkedAt,
         };
       }
@@ -115,7 +115,11 @@ export function createGeminiProvider(): ProviderAdapter {
     },
     async *streamChat(req: StreamChatRequest): AsyncGenerator<ProviderStreamEvent> {
       if (!this.isConfigured()) {
-        yield { type: "error", error: "Gemini is not configured", retryable: true };
+        yield {
+          type: "error",
+          error: "This feature is temporarily unavailable. Please try again later.",
+          retryable: true,
+        };
         return;
       }
 
@@ -162,9 +166,10 @@ export function createGeminiProvider(): ProviderAdapter {
           },
         });
       } catch (err) {
+        console.error("[provider:gemini] stream failed:", err);
         yield {
           type: "error",
-          error: err instanceof Error ? err.message : String(err),
+          error: "We couldn't generate a response. Please try again.",
           retryable: true,
         };
         return;

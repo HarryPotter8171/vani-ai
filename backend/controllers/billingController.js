@@ -1,4 +1,5 @@
 import { billingService } from "../billing/init.js";
+import { toPublicErrorMessage } from "../utils/errors.js";
 
 function resolveUser(req) {
   if (!req.user?._id) {
@@ -26,7 +27,7 @@ export const getBillingOverview = async (req, res) => {
   } catch (err) {
     console.error("[billing]", err);
     res.status(err.status || 500).json({
-      error: err.message || "Unable to load billing overview",
+      error: toPublicErrorMessage(err, "Unable to load billing overview"),
     });
   }
 };
@@ -40,7 +41,7 @@ export const listPlans = async (_req, res) => {
       razorpayEnabled: billingService.isRazorpayEnabled(),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to list plans" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list plans") });
   }
 };
 
@@ -51,7 +52,7 @@ export const getSubscription = async (req, res) => {
     res.json({ subscription });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to load subscription",
+      error: toPublicErrorMessage(err, "Unable to load subscription"),
     });
   }
 };
@@ -63,7 +64,7 @@ export const getUsage = async (req, res) => {
     res.json(usage);
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to load usage",
+      error: toPublicErrorMessage(err, "Unable to load usage"),
     });
   }
 };
@@ -74,7 +75,7 @@ export const listInvoices = async (req, res) => {
     const invoices = await billingService.listInvoices(userIdOf(user));
     res.json({ invoices });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to list invoices" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list invoices") });
   }
 };
 
@@ -86,7 +87,7 @@ export const getEntitlements = async (req, res) => {
     res.json({ entitlements });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to load entitlements",
+      error: toPublicErrorMessage(err, "Unable to load entitlements"),
     });
   }
 };
@@ -145,7 +146,7 @@ export const requestUpgrade = async (req, res) => {
   } catch (err) {
     console.error("[billing]", err);
     res.status(err.status || 500).json({
-      error: err.message || "Unable to change plan",
+      error: toPublicErrorMessage(err, "Unable to change plan"),
     });
   }
 };
@@ -184,7 +185,7 @@ export const createCheckout = async (req, res) => {
   } catch (err) {
     console.error("[billing]", err);
     res.status(err.status || 500).json({
-      error: err.message || "Unable to create checkout session",
+      error: toPublicErrorMessage(err, "Unable to create checkout session"),
     });
   }
 };
@@ -201,7 +202,7 @@ export const createPortal = async (req, res) => {
   } catch (err) {
     console.error("[billing]", err);
     res.status(err.status || 500).json({
-      error: err.message || "Unable to open customer portal",
+      error: toPublicErrorMessage(err, "Unable to open customer portal"),
     });
   }
 };
@@ -218,7 +219,7 @@ export const cancelSubscription = async (req, res) => {
     });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to cancel subscription",
+      error: toPublicErrorMessage(err, "Unable to cancel subscription"),
     });
   }
 };
@@ -236,7 +237,7 @@ export const resumeSubscription = async (req, res) => {
     });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to resume subscription",
+      error: toPublicErrorMessage(err, "Unable to resume subscription"),
     });
   }
 };
@@ -269,7 +270,7 @@ export const billingWebhook = async (req, res) => {
   } catch (err) {
     console.error("[billing:webhook]", err);
     res.status(err.status || 400).json({
-      error: err.message || "Webhook failed",
+      error: toPublicErrorMessage(err, "Webhook failed"),
     });
   }
 };

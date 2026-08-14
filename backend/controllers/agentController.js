@@ -351,12 +351,19 @@ export const runAgent = async (req, res) => {
   } catch (err) {
     console.error("Agent run error:", err);
     if (err?.code === "RATE_LIMIT" || err?.code === "SESSION_LIMIT") {
-      send({ type: "error", error: err.message, code: err.code });
+      send({
+        type: "error",
+        error: "Too many requests. Please wait a moment and try again.",
+        code: err.code,
+      });
     } else {
-      send({ type: "error", error: err?.message || "Agent run failed" });
+      send({
+        type: "error",
+        error: "We couldn't complete that task right now. Please try again.",
+      });
     }
     if (session) {
-      agentManager.cancel(session.id, err?.message || "Failed");
+      agentManager.cancel(session.id, "Failed");
     }
   } finally {
     if (!res.writableEnded) res.end();

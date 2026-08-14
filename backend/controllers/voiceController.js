@@ -1,4 +1,5 @@
 import { voiceService } from "../services/voice/index.js";
+import { toPublicErrorMessage } from "../utils/errors.js";
 
 function badRequest(res, message, code = "BAD_REQUEST") {
   return res.status(400).json({ error: message, code });
@@ -127,7 +128,7 @@ export async function speechToText(req, res) {
     console.error("[voice] stt:", err);
     const status = err.status || 500;
     return res.status(status).json({
-      error: err.message || "Transcription failed.",
+      error: toPublicErrorMessage(err, "Transcription failed."),
       code: err.code || "STT_FAILED",
     });
   }
@@ -199,7 +200,10 @@ export async function textToSpeech(req, res) {
     console.error("[voice] tts:", err);
     const status = err.status || 500;
     return res.status(status).json({
-      error: err.message || "Speech synthesis failed.",
+      error: toPublicErrorMessage(
+        err,
+        "Speech is temporarily unavailable. Please try again later."
+      ),
       code: err.code || "TTS_FAILED",
     });
   }

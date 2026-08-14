@@ -13,6 +13,7 @@ import {
 } from '@/lib/agents';
 import type { ExecutorState } from '@/lib/agents/Executor';
 import { GateDenialError, type GateDenial } from '@/lib/billing/gateError';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface UseAgentOptions {
   chatId?: string | null;
@@ -89,7 +90,12 @@ export function useAgent(options: UseAgentOptions = {}) {
     }
 
     if (event.type === 'error' && event.error) {
-      onErrorRef.current?.(event.error);
+      onErrorRef.current?.(
+        getUserFriendlyError(event.error, {
+          feature: 'agent',
+          fallback: 'Agent run failed',
+        })
+      );
     }
   }, []);
 
@@ -141,14 +147,20 @@ export function useAgent(options: UseAgentOptions = {}) {
         }
         if (err instanceof GateDenialError) {
           onGateDenialRef.current?.(err.denial);
-          const message = err.message || 'Agent run failed';
+          const message = getUserFriendlyError(err, {
+            feature: 'agent',
+            fallback: 'Agent run failed',
+          });
           if (!onGateDenialRef.current) onErrorRef.current?.(message);
           setExecutor((prev) =>
             reduceExecutorState(prev, { type: 'error', error: message })
           );
           return null;
         }
-        const message = (err as Error).message || 'Agent run failed';
+        const message = getUserFriendlyError(err, {
+          feature: 'agent',
+          fallback: 'Agent run failed',
+        });
         onErrorRef.current?.(message);
         setExecutor((prev) =>
           reduceExecutorState(prev, { type: 'error', error: message })

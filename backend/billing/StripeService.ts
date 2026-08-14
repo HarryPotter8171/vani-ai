@@ -32,7 +32,7 @@ export class StripeService {
 
   getClient(): Stripe {
     const key = getStripeSecretKey();
-    if (!key) throw httpError("Stripe is not configured (STRIPE_SECRET_KEY)", 503);
+    if (!key) throw httpError("Billing is temporarily unavailable.", 503);
     if (!stripeClient) {
       stripeClient = new Stripe(key, {
         apiVersion: "2025-08-27.basil",
@@ -45,7 +45,7 @@ export class StripeService {
   constructEvent(rawBody: Buffer | string, signature: string): Stripe.Event {
     const secret = getStripeWebhookSecret();
     if (!secret) {
-      throw httpError("STRIPE_WEBHOOK_SECRET is not configured", 503);
+      throw httpError("Billing is temporarily unavailable.", 503);
     }
     return this.getClient().webhooks.constructEvent(rawBody, signature, secret);
   }
@@ -141,7 +141,7 @@ export class StripeService {
     const priceId = getStripePriceId(opts.planId, opts.interval);
     if (!priceId) {
       throw httpError(
-        `Stripe price not configured for ${opts.planId}/${opts.interval}`,
+        `Selected plan is temporarily unavailable.`,
         503
       );
     }
@@ -216,7 +216,7 @@ export class StripeService {
     const priceId = getStripePriceId(opts.planId, opts.interval);
     if (!priceId) {
       throw httpError(
-        `Stripe price not configured for ${opts.planId}/${opts.interval}`,
+        `Selected plan is temporarily unavailable.`,
         503
       );
     }

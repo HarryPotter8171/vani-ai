@@ -26,9 +26,9 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
           'bg-surface-input text-muted-foreground',
           'backdrop-blur-[22px] border border-border',
           'shadow-[0_1px_3px_rgba(0,0,0,0.06)]',
-          'transition-[background-color,color,transform] duration-[240ms] ease-[cubic-bezier(0.23,1,0.32,1)]',
+          'transition-[background-color,color,transform] duration-fast ease-apple',
           'hover:bg-foreground/[0.05] hover:text-foreground',
-          'active:scale-[0.96]',
+          'active:scale-[0.96] pressable',
           'touch-manipulation',
           'dark:shadow-[0_1px_4px_rgba(0,0,0,0.35)]'
         )}

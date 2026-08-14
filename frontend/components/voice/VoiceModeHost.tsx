@@ -6,6 +6,7 @@ import { VoiceOverlay } from '@/components/lazy/FeaturePanels';
 import { VoiceOverlaySkeleton } from '@/components/lazy/PanelSkeletons';
 import FloatingMicButton from '@/components/voice/FloatingMicButton';
 import FloatingVoiceOrb from '@/components/voice/FloatingVoiceOrb';
+import MicPermissionDialog from '@/components/voice/MicPermissionDialog';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import type { Message } from '@/lib/types';
 
@@ -36,6 +37,7 @@ export interface VoiceModeHostProps {
  * - Idle → floating mic FAB (press once to start)
  * - Active expanded → dark premium Voice Overlay
  * - Minimized → compact floating orb (session continues)
+ * - Mic blocked → recovery dialog; text chat stays usable
  */
 export default function VoiceModeHost({
   chatId,
@@ -60,7 +62,9 @@ export default function VoiceModeHost({
   const openVoiceMode = voice.openVoiceMode;
   useEffect(() => {
     onRegisterOpen(() => {
-      void openVoiceMode();
+      void openVoiceMode().catch((err) => {
+        console.error('[voice] open from shell failed', err);
+      });
     });
   }, [onRegisterOpen, openVoiceMode]);
 
@@ -77,6 +81,8 @@ export default function VoiceModeHost({
   }, [minimizeSignal]);
 
   const showIdleFab = !voice.isLive;
+  // Keep overlay out of the way while the permission dialog owns the UX.
+  const showOverlay = voice.isExpanded && !voice.micPermissionDenied;
 
   return (
     <>
@@ -84,14 +90,17 @@ export default function VoiceModeHost({
         {showIdleFab ? (
           <FloatingMicButton
             visible
+            loading={voice.micRequesting}
             onClick={() => {
-              void openVoiceMode();
+              void openVoiceMode().catch((err) => {
+                console.error('[voice] open from FAB failed', err);
+              });
             }}
           />
         ) : null}
       </AnimatePresence>
 
-      {voice.isExpanded ? (
+      {showOverlay ? (
         <Suspense fallback={<VoiceOverlaySkeleton />}>
           <VoiceOverlay
             open={voice.isExpanded}
@@ -107,25 +116,52 @@ export default function VoiceModeHost({
             socketConnected={voice.socketConnected}
             error={voice.error}
             onMinimize={voice.minimizeVoiceMode}
-            onEnd={voice.closeVoiceMode}
-            onInterrupt={voice.interrupt}
+            onEnd={() => {
+              void voice.closeVoiceMode().catch((err) => {
+                console.error('[voice] close failed', err);
+              });
+            }}
+            onInterrupt={() => {
+              void voice.interrupt().catch((err) => {
+                console.error('[voice] interrupt failed', err);
+              });
+            }}
             onToggleMute={voice.toggleMute}
           />
         </Suspense>
       ) : null}
 
       <AnimatePresence>
-        {voice.isMinimized ? (
+        {voice.isMinimized && !voice.micPermissionDenied ? (
           <FloatingVoiceOrb
             visible
             phase={voice.phase}
             muted={voice.muted}
             elapsedLabel={voice.elapsedLabel}
             onExpand={voice.expandVoiceMode}
-            onEnd={voice.closeVoiceMode}
+            onEnd={() => {
+              void voice.closeVoiceMode().catch((err) => {
+                console.error('[voice] close from orb failed', err);
+              });
+            }}
           />
         ) : null}
       </AnimatePresence>
+
+      <MicPermissionDialog
+        open={voice.micPermissionDenied}
+        reason={voice.micFailureReason}
+        requesting={voice.micRequesting}
+        onClose={() => {
+          voice.dismissMicPermissionDenied();
+          void voice.closeVoiceMode().catch(() => undefined);
+        }}
+        onRetry={() => {
+          void voice.retryMicrophone().catch((err) => {
+            console.error('[voice] mic retry failed', err);
+          });
+        }}
+      />
     </>
   );
 }

@@ -1,3 +1,4 @@
+import { toPublicErrorMessage } from "../utils/errors.js";
 import {
   sessionManager,
   sandboxManager,
@@ -28,7 +29,7 @@ export const codeInterpreterHealth = async (_req, res) => {
     const health = await sandboxManager.checkHealth();
     res.json({ ok: true, ...health });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Health check failed" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Health check failed") });
   }
 };
 
@@ -40,7 +41,7 @@ export const createSession = async (req, res) => {
   } catch (err) {
     console.error("[code-interpreter]", err);
     res.status(err.status || 500).json({
-      error: err.message || "Unable to create session",
+      error: toPublicErrorMessage(err, "Unable to create session"),
     });
   }
 };
@@ -51,7 +52,7 @@ export const listSessions = async (req, res) => {
     const sessions = sessionManager.listSessions(userIdOf(user));
     res.json({ sessions });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to list sessions" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list sessions") });
   }
 };
 
@@ -62,7 +63,7 @@ export const getSession = async (req, res) => {
     res.json({ session });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to load session",
+      error: toPublicErrorMessage(err, "Unable to load session"),
     });
   }
 };
@@ -74,7 +75,7 @@ export const destroySession = async (req, res) => {
     if (!ok) return res.status(404).json({ error: "Session not found" });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to destroy session" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to destroy session") });
   }
 };
 
@@ -119,7 +120,7 @@ export const executeCode = async (req, res) => {
   } catch (err) {
     console.error("[code-interpreter]", err);
     res.status(err.status || 500).json({
-      error: err.message || "Execution failed",
+      error: toPublicErrorMessage(err, "Execution failed"),
     });
   }
 };
@@ -134,7 +135,7 @@ export const interruptExecution = async (req, res) => {
     res.json({ session });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to interrupt",
+      error: toPublicErrorMessage(err, "Unable to interrupt"),
     });
   }
 };
@@ -146,7 +147,7 @@ export const restartKernel = async (req, res) => {
     res.json({ session });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to restart kernel",
+      error: toPublicErrorMessage(err, "Unable to restart kernel"),
     });
   }
 };
@@ -186,7 +187,7 @@ export const uploadSessionFile = async (req, res) => {
   } catch (err) {
     console.error("[code-interpreter]", err);
     res.status(err.status || 500).json({
-      error: err.message || "Upload failed",
+      error: toPublicErrorMessage(err, "Upload failed"),
     });
   }
 };
@@ -213,7 +214,7 @@ export const downloadSessionFile = async (req, res) => {
     res.send(payload.buffer);
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Download failed",
+      error: toPublicErrorMessage(err, "Download failed"),
     });
   }
 };
@@ -225,7 +226,7 @@ export const listSessionFiles = async (req, res) => {
     res.json({ files: session.files, plots: session.plots });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to list files",
+      error: toPublicErrorMessage(err, "Unable to list files"),
     });
   }
 };
@@ -266,7 +267,7 @@ export const publishToCanvas = async (req, res) => {
     res.json({ ok: true, canvasId: published.canvasId });
   } catch (err) {
     res.status(err.status || 500).json({
-      error: err.message || "Unable to publish to canvas",
+      error: toPublicErrorMessage(err, "Unable to publish to canvas"),
     });
   }
 };
@@ -276,6 +277,6 @@ export const recentAudit = async (req, res) => {
     resolveUser(req);
     res.json({ events: codeLog.recent(100) });
   } catch (err) {
-    res.status(401).json({ error: err.message || "Unauthorized" });
+    res.status(401).json({ error: toPublicErrorMessage(err, "Unauthorized") });
   }
 };

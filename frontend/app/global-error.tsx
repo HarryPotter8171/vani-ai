@@ -3,9 +3,21 @@
 import { useEffect } from 'react';
 import { captureException } from '@/lib/monitoring';
 
+const PROD_SIGN_IN_ERROR = 'Unable to sign in.\nPlease try again.';
+
+function isAuthFailure(error: Error): boolean {
+  const name = error.name || '';
+  const message = error.message || '';
+  if (name === 'AuthRequiredError') return true;
+  return /auth|sign[\s-]?in|token|unauthorized|jwt|session|Startup authentication timed out/i.test(
+    `${name} ${message}`
+  );
+}
+
 /**
  * Root-level error boundary — replaces the root layout when it itself
- * crashes. Must render its own <html>/<body>. Kept minimal and friendly.
+ * crashes. Must render its own <html>/<body>. Auth failures never show a
+ * raw crash screen.
  */
 export default function GlobalError({
   error,
@@ -14,9 +26,21 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const authFailure = isAuthFailure(error);
+
   useEffect(() => {
     captureException(error, { digest: error.digest, source: 'app/global-error' });
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[global error]', error.message, error.digest);
+    } else {
+      console.error('[global error]', error.name || 'Error');
+    }
   }, [error]);
+
+  const title = authFailure ? 'Unable to sign in' : 'Something went wrong';
+  const body = authFailure
+    ? PROD_SIGN_IN_ERROR
+    : 'VANI hit an unexpected error. Please try again.';
 
   return (
     <html lang="en">
@@ -46,34 +70,31 @@ export default function GlobalError({
           }}
         >
           <div style={{ fontSize: 14, fontWeight: 600, color: '#d70015', marginBottom: 8 }}>
-            Something went wrong
+            {title}
           </div>
-          <p style={{ fontSize: 13, lineHeight: 1.5, color: '#6e6e73', margin: '0 0 12px' }}>
-            VANI AI hit an unexpected error. Please try again.
+          <p
+            style={{
+              fontSize: 13,
+              lineHeight: 1.5,
+              color: '#6e6e73',
+              margin: '0 0 12px',
+              whiteSpace: 'pre-line',
+            }}
+          >
+            {body}
           </p>
-          {error.digest ? (
-            <p
-              style={{
-                fontFamily: 'ui-monospace, Menlo, monospace',
-                fontSize: 11,
-                color: '#86868b',
-                margin: '0 0 12px',
-              }}
-            >
-              Error ID: {error.digest}
-            </p>
-          ) : null}
           <button
             type="button"
             onClick={reset}
             style={{
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: 500,
               color: '#d70015',
               background: 'rgba(255, 59, 48, 0.1)',
               border: 'none',
               borderRadius: 8,
-              padding: '6px 10px',
+              padding: '10px 14px',
+              minHeight: 44,
               cursor: 'pointer',
             }}
           >

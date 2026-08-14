@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/apiClient';
 import type { ChatSummary, Project, ProjectFile, ProjectMemory } from '@/lib/types';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);
@@ -33,7 +34,7 @@ export function useProjects() {
       setProjects(data);
       return data;
     } catch (err) {
-      setError((err as Error).message);
+      setError(getUserFriendlyError(err, { fallback: "Couldn't load projects" }));
       return [];
     } finally {
       setIsLoading(false);

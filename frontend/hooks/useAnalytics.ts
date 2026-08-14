@@ -9,6 +9,7 @@ import {
   type AnalyticsIdentity,
   type UserAnalytics,
 } from '@/lib/analytics';
+import { getUserFriendlyError } from '@/lib/userFacingError';
 
 export interface UseAnalyticsOptions {
   enabled?: boolean;
@@ -46,7 +47,9 @@ export function useAnalytics({ enabled = true, onError }: UseAnalyticsOptions = 
         if (me) setIdentity(me);
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Unable to load analytics';
+        const message = getUserFriendlyError(err, {
+          fallback: 'Unable to load analytics',
+        });
         setError(message);
         onErrorRef.current?.(message);
       } finally {
@@ -63,7 +66,7 @@ export function useAnalytics({ enabled = true, onError }: UseAnalyticsOptions = 
     try {
       await downloadAnalyticsCsv('user');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'CSV export failed';
+      const message = getUserFriendlyError(err, { fallback: 'CSV export failed' });
       onErrorRef.current?.(message);
     }
   }, []);
@@ -79,7 +82,7 @@ export function useAnalytics({ enabled = true, onError }: UseAnalyticsOptions = 
         `vani-analytics-${stamp}.pdf`
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'PDF export failed';
+      const message = getUserFriendlyError(err, { fallback: 'PDF export failed' });
       onErrorRef.current?.(message);
     }
   }, []);

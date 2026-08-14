@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/apiClient';
 import { filterChatsByQuery } from '@/lib/chatSearch';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { toUserFacingError } from '@/lib/userFacingError';
 import type { ChatSummary } from '@/lib/types';
 
 interface RawChatSummary {
@@ -80,7 +81,7 @@ export function useChatHistory() {
 
       const path = params.toString() ? `/chat/list?${params.toString()}` : '/chat/list';
       const response = await apiFetch(path);
-      if (!response.ok) throw new Error('Unable to load conversations');
+      if (!response.ok) throw new Error("Couldn't load conversations");
 
       const data: RawChatSummary[] = await response.json();
       if (requestId !== requestIdRef.current) return; // stale response
@@ -88,7 +89,8 @@ export function useChatHistory() {
       setServerChats(data.map(mapChat));
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
-      setError((err as Error).message || 'Unable to load conversations');
+      setError(toUserFacingError(err, "Couldn't load conversations"));
+      console.error('[chats]', err);
     } finally {
       if (requestId === requestIdRef.current) setIsLoading(false);
     }

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { beforeAll, afterAll, afterEach } from "vitest";
+import { configureMongoose, connectMongo } from "../config/mongoReady.js";
 
 process.env.NODE_ENV = process.env.NODE_ENV || "test";
 process.env.AUTH_JWT_SECRET = process.env.AUTH_JWT_SECRET || "test-auth-secret-do-not-use-in-prod";
@@ -10,9 +11,11 @@ process.env.VANI_ENABLE_BROWSER_AUTOMATION = process.env.VANI_ENABLE_BROWSER_AUT
 // Local Echo MCP integration/unit tests need stdio; production always refuses.
 process.env.MCP_ALLOW_STDIO = process.env.MCP_ALLOW_STDIO || "true";
 
+configureMongoose();
+
 beforeAll(async () => {
   if (mongoose.connection.readyState === 0) {
-    await mongoose.connect(process.env.MONGODB_URI);
+    await connectMongo(process.env.MONGODB_URI);
   }
 });
 

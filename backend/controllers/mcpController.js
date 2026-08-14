@@ -1,3 +1,4 @@
+import { toPublicErrorMessage } from "../utils/errors.js";
 import {
   mcpManager,
   mcpPermissionManager,
@@ -24,7 +25,7 @@ export const listServers = async (req, res) => {
     res.json({ servers });
   } catch (err) {
     console.error("[mcp]", err);
-    res.status(500).json({ error: err.message || "Unable to list MCP servers" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list MCP servers") });
   }
 };
 
@@ -35,7 +36,7 @@ export const getServer = async (req, res) => {
     res.json({ server });
   } catch (err) {
     const status = err.message === "MCP server not found" ? 404 : 500;
-    res.status(status).json({ error: err.message || "Unable to load MCP server" });
+    res.status(status).json({ error: toPublicErrorMessage(err, "Unable to load MCP server") });
   }
 };
 
@@ -50,7 +51,7 @@ export const addServer = async (req, res) => {
     res.status(201).json({ server });
   } catch (err) {
     console.error("[mcp]", err);
-    res.status(400).json({ error: err.message || "Unable to add MCP server" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to add MCP server") });
   }
 };
 
@@ -65,7 +66,7 @@ export const updateServer = async (req, res) => {
     res.json({ server });
   } catch (err) {
     const status = err.message === "MCP server not found" ? 404 : 400;
-    res.status(status).json({ error: err.message || "Unable to update MCP server" });
+    res.status(status).json({ error: toPublicErrorMessage(err, "Unable to update MCP server") });
   }
 };
 
@@ -76,7 +77,7 @@ export const removeServer = async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     const status = err.message === "MCP server not found" ? 404 : 500;
-    res.status(status).json({ error: err.message || "Unable to remove MCP server" });
+    res.status(status).json({ error: toPublicErrorMessage(err, "Unable to remove MCP server") });
   }
 };
 
@@ -86,7 +87,7 @@ export const connectServer = async (req, res) => {
     const status = await mcpManager.connect(String(user._id), req.params.id);
     res.json({ status });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Unable to connect" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to connect") });
   }
 };
 
@@ -96,7 +97,7 @@ export const disconnectServer = async (req, res) => {
     await mcpManager.disconnect(String(user._id), req.params.id);
     res.json({ ok: true });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Unable to disconnect" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to disconnect") });
   }
 };
 
@@ -106,7 +107,7 @@ export const testServer = async (req, res) => {
     const result = await mcpManager.testConnection(String(user._id), req.params.id);
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message || "Connection test failed" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Connection test failed") });
   }
 };
 
@@ -117,7 +118,7 @@ export const testTransport = async (req, res) => {
     const result = await mcpManager.testTransport(transport, timeoutMs);
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message || "Transport test failed" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Transport test failed") });
   }
 };
 
@@ -127,7 +128,7 @@ export const listTools = async (req, res) => {
     const tools = await mcpManager.listTools(String(user._id), req.params.id);
     res.json({ tools });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Unable to list tools" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to list tools") });
   }
 };
 
@@ -137,7 +138,7 @@ export const listResources = async (req, res) => {
     const resources = await mcpManager.listResources(String(user._id), req.params.id);
     res.json({ resources });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Unable to list resources" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to list resources") });
   }
 };
 
@@ -147,7 +148,7 @@ export const listPrompts = async (req, res) => {
     const prompts = await mcpManager.listPrompts(String(user._id), req.params.id);
     res.json({ prompts });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Unable to list prompts" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Unable to list prompts") });
   }
 };
 
@@ -166,7 +167,7 @@ export const callTool = async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message || "Tool call failed" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Tool call failed") });
   }
 };
 
@@ -182,7 +183,7 @@ export const readResource = async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message || "Resource read failed" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Resource read failed") });
   }
 };
 
@@ -195,7 +196,7 @@ export const health = async (req, res) => {
     );
     res.json({ health: healthStatus });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Health check failed" });
+    res.status(400).json({ error: toPublicErrorMessage(err, "Health check failed") });
   }
 };
 
@@ -205,7 +206,7 @@ export const discoverTools = async (req, res) => {
     const tools = await mcpManager.discoverTools(String(user._id));
     res.json({ tools });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to discover tools" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to discover tools") });
   }
 };
 
@@ -215,7 +216,7 @@ export const listPermissions = async (req, res) => {
     const permissions = await mcpPermissionManager.listPermissions(String(user._id));
     res.json({ permissions });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Unable to list permissions" });
+    res.status(500).json({ error: toPublicErrorMessage(err, "Unable to list permissions") });
   }
 };
 
@@ -230,7 +231,7 @@ export const getPermission = async (req, res) => {
     res.json({ permission });
   } catch (err) {
     const status = err.message === "MCP server not found" ? 404 : 500;
-    res.status(status).json({ error: err.message || "Unable to load permission" });
+    res.status(status).json({ error: toPublicErrorMessage(err, "Unable to load permission") });
   }
 };
 
@@ -248,7 +249,7 @@ export const grantPermission = async (req, res) => {
     res.json({ permission });
   } catch (err) {
     const status = err.message === "MCP server not found" ? 404 : 400;
-    res.status(status).json({ error: err.message || "Unable to grant permission" });
+    res.status(status).json({ error: toPublicErrorMessage(err, "Unable to grant permission") });
   }
 };
 
@@ -277,6 +278,6 @@ export const revokePermission = async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     const status = err.message === "MCP server not found" ? 404 : 400;
-    res.status(status).json({ error: err.message || "Unable to revoke permission" });
+    res.status(status).json({ error: toPublicErrorMessage(err, "Unable to revoke permission") });
   }
 };

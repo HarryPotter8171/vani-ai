@@ -36,7 +36,7 @@ export function PremiumEmpty({
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.32, ease: EASE.smooth }}
+      transition={{ duration: 0.2, ease: EASE.smooth }}
       className={cn(
         'flex w-full flex-col items-center justify-center text-center',
         pad,

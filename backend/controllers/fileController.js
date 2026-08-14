@@ -1,4 +1,5 @@
 import path from "path";
+import { toPublicErrorMessage } from "../utils/errors.js";
 import {
   removeUploadedFiles,
   resolveStoredKind,
@@ -126,7 +127,7 @@ export const deleteFile = async (req, res) => {
     return res.status(204).send();
   } catch (err) {
     if (err.code === "INVALID_ID") {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({ error: toPublicErrorMessage(err) });
     }
     if (err.code === "NOT_FOUND") {
       return res.status(404).json({ error: "File not found." });
@@ -155,7 +156,7 @@ export const getFileMetadata = async (req, res) => {
     });
   } catch (err) {
     if (err.code === "INVALID_ID") {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({ error: toPublicErrorMessage(err) });
     }
     if (err.code === "NOT_FOUND") {
       return res.status(404).json({ error: "File not found." });
@@ -183,7 +184,7 @@ export const getSignedFileUrl = async (req, res) => {
     res.json({ url, expiresIn: 900 });
   } catch (err) {
     if (err.code === "INVALID_ID") {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({ error: toPublicErrorMessage(err) });
     }
     if (err.code === "NOT_FOUND") {
       return res.status(404).json({ error: "File not found." });
@@ -203,16 +204,16 @@ export const parseFile = async (req, res) => {
     res.json(result);
   } catch (err) {
     if (err.code === "INVALID_ID") {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({ error: toPublicErrorMessage(err) });
     }
     if (err.code === "NOT_FOUND") {
       return res.status(404).json({ error: "File not found." });
     }
     if (err instanceof UnsupportedFormatError || err.code === "UNSUPPORTED_FORMAT") {
-      return res.status(415).json({ error: err.message });
+      return res.status(415).json({ error: toPublicErrorMessage(err) });
     }
     if (err instanceof ParseFailedError || err.code === "PARSE_FAILED") {
-      return res.status(422).json({ error: err.message });
+      return res.status(422).json({ error: toPublicErrorMessage(err) });
     }
     console.error("parseFile:", err);
     res.status(500).json({ error: "Unable to parse file." });
@@ -229,16 +230,16 @@ export const processImageFile = async (req, res) => {
     res.json(result);
   } catch (err) {
     if (err.code === "INVALID_ID") {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({ error: toPublicErrorMessage(err) });
     }
     if (err.code === "NOT_FOUND") {
       return res.status(404).json({ error: "File not found." });
     }
     if (err instanceof UnsupportedImageError || err.code === "UNSUPPORTED_IMAGE") {
-      return res.status(415).json({ error: err.message });
+      return res.status(415).json({ error: toPublicErrorMessage(err) });
     }
     if (err instanceof ImageProcessingError || err.code === "IMAGE_PROCESSING_FAILED") {
-      return res.status(422).json({ error: err.message });
+      return res.status(422).json({ error: toPublicErrorMessage(err) });
     }
     console.error("processImageFile:", err);
     res.status(500).json({ error: "Unable to process image." });
@@ -259,7 +260,7 @@ export const understandFile = async (req, res) => {
     res.json(result);
   } catch (err) {
     if (err.code === "INVALID_ID") {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({ error: toPublicErrorMessage(err) });
     }
     if (err.code === "NOT_FOUND") {
       return res.status(404).json({ error: "File not found." });
@@ -272,7 +273,7 @@ export const understandFile = async (req, res) => {
       err instanceof UnsupportedImageError ||
       err.code === "UNSUPPORTED_IMAGE"
     ) {
-      return res.status(415).json({ error: err.message });
+      return res.status(415).json({ error: toPublicErrorMessage(err) });
     }
     if (
       err instanceof DocumentUnderstandingError ||
@@ -282,7 +283,7 @@ export const understandFile = async (req, res) => {
       err instanceof ImageProcessingError ||
       err.code === "IMAGE_PROCESSING_FAILED"
     ) {
-      return res.status(422).json({ error: err.message });
+      return res.status(422).json({ error: toPublicErrorMessage(err) });
     }
     console.error("understandFile:", err);
     res.status(500).json({ error: "Unable to analyze document." });
@@ -321,7 +322,7 @@ export const getFileContent = async (req, res) => {
     stream.pipe(res);
   } catch (err) {
     if (err.code === "INVALID_ID") {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({ error: toPublicErrorMessage(err) });
     }
     if (err.code === "NOT_FOUND") {
       return res.status(404).json({ error: "File not found." });

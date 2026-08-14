@@ -8,6 +8,7 @@ import {
   RESEARCH_STATUS,
   TERMINAL_RESEARCH_STATUS,
 } from "./config.js";
+import { publicFeatureError } from "../../utils/errors.js";
 
 export class ResearchSession {
   /**
@@ -248,7 +249,7 @@ export class ResearchSession {
   }
 
   fail(error) {
-    this.error = error?.message || String(error || "Research failed");
+    this.error = publicFeatureError("research", error);
     this.status = RESEARCH_STATUS.FAILED;
     this.finishedAt = Date.now();
     this.pushTimeline({
