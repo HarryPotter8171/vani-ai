@@ -147,14 +147,14 @@ function Card({
   return (
     <div className={cn('settings-card', className)}>
       {(title || description) && (
-        <div className="border-b border-divider px-5 py-4">
+        <div className="border-b border-divider px-4 py-3.5 md:px-5 md:py-4">
           {title ? (
             <h3 className="text-sidebar font-semibold tracking-[-0.02em] text-foreground">
               {title}
             </h3>
           ) : null}
           {description ? (
-            <p className="mt-0.5 text-sm leading-relaxed text-text-secondary">
+            <p className="mt-0.5 break-words text-sm leading-relaxed text-text-secondary">
               {description}
             </p>
           ) : null}
@@ -175,16 +175,16 @@ function SettingsRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="settings-row">
-      <div className="min-w-0">
-        <p className="text-sidebar font-medium tracking-[-0.016em] text-foreground">{label}</p>
+    <div className="settings-row max-md:gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="break-words text-sidebar font-medium tracking-[-0.016em] text-foreground">{label}</p>
         {description ? (
-          <p className="mt-0.5 text-sm leading-relaxed text-text-secondary">
+          <p className="mt-0.5 break-words text-sm leading-relaxed text-text-secondary">
             {description}
           </p>
         ) : null}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0 max-md:w-full">{children}</div>
     </div>
   );
 }
@@ -199,7 +199,7 @@ function Segmented<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <div className="inline-flex max-w-full flex-wrap rounded-full bg-surface-hover p-0.5">
+    <div className="inline-flex max-w-full flex-wrap rounded-full bg-surface-hover p-0.5 max-md:w-full max-md:justify-start">
       {options.map((opt) => (
         <button
           key={opt.id}
@@ -304,7 +304,7 @@ function RadioOption({
   );
 }
 
-function QuotaRow({ row }: { row: QuotaRemaining }) {
+function QuotaRow({ row, mobileCard = false }: { row: QuotaRemaining; mobileCard?: boolean }) {
   // Hide disabled metrics (plan limit 0) instead of showing empty 0/0 counters.
   if (!row.unlimited && row.limit === 0) return null;
 
@@ -312,12 +312,18 @@ function QuotaRow({ row }: { row: QuotaRemaining }) {
   const barColor = pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-accent';
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-medium text-foreground">
+    <div
+      className={cn(
+        'space-y-1.5',
+        mobileCard &&
+          'rounded-xl bg-surface-secondary/50 p-4 md:bg-transparent md:p-0'
+      )}
+    >
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-2">
+        <span className="break-words text-sm font-medium text-foreground">
           {METRIC_LABELS[row.metric]}
         </span>
-        <span className="text-micro tabular-nums text-text-secondary">
+        <span className="shrink-0 text-micro tabular-nums text-text-secondary">
           {formatMetricValue(row.metric, row.used)}
           {row.unlimited ? ' · Unlimited' : ` / ${formatMetricValue(row.metric, row.limit)}`}
         </span>
@@ -653,7 +659,7 @@ export default function BillingSettings({
                   </p>
                 </div>
 
-                <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:p-6">
+                <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] pt-4 md:px-6 md:py-6">
                   {loading && !overview && needsBillingData ? (
                     <div className="mx-auto flex w-full max-w-[500px] flex-col gap-4 py-2" aria-busy="true" aria-label="Loading billing">
                       <SkeletonCard />
@@ -675,18 +681,18 @@ export default function BillingSettings({
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -4 }}
                         transition={{ duration: 0.18, ease: EASE }}
-                        className="mx-auto flex w-full max-w-[500px] flex-col gap-4"
+                        className="mx-auto flex w-full max-w-[500px] flex-col gap-6"
                       >
                         {section === 'general' && (
                           <>
                             {overview && (
                               <Card title="Plan">
-                                <div className="space-y-3 px-5 py-4">
-                                  <div>
-                                    <p className="text-title font-semibold tracking-[-0.03em]">
+                                <div className="flex flex-col gap-4 px-4 py-4 md:px-5">
+                                  <div className="min-w-0">
+                                    <p className="break-words text-title font-semibold tracking-[-0.03em]">
                                       {overview.plan.name}
                                     </p>
-                                    <p className="mt-1 text-sm text-text-secondary">
+                                    <p className="mt-1 break-words text-sm text-text-secondary">
                                       {formatPrice(
                                         overview.plan.priceMonthlyCents,
                                         overview.plan.priceYearlyCents,
@@ -797,6 +803,7 @@ export default function BillingSettings({
                               ) : (
                                 <Select
                                   appearance="field"
+                                  className="max-md:w-full"
                                   value={selectedModel || AUTO_MODEL_KEY}
                                   onChange={(e) => onSelectModel?.(e.target.value)}
                                 >
@@ -812,6 +819,7 @@ export default function BillingSettings({
                             <SettingsRow label="Voice" description="Live Mode speaking voice">
                               <Select
                                 appearance="field"
+                                className="max-md:w-full"
                                 value={voiceId}
                                 onChange={(e) => {
                                   const next = e.target.value;
@@ -857,7 +865,7 @@ export default function BillingSettings({
                                 />
                               )}
                             </SettingsRow>
-                            <div className="px-5 py-4">
+                            <div className="px-4 py-4 md:px-5">
                               <Button
                                 type="button"
                                 variant="primary"
@@ -877,13 +885,13 @@ export default function BillingSettings({
 
                         {section === 'profile' && (
                           <Card>
-                            <div className="flex items-center gap-4 px-5 py-5">
+                            <div className="flex flex-col items-center gap-4 px-4 py-5 text-center sm:flex-row sm:items-center sm:text-left md:px-5">
                               <UserAvatar size="xl" />
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex-1">
                                 <p className="truncate text-title font-semibold tracking-[-0.024em]">
                                   {name || 'VANI user'}
                                 </p>
-                                <p className="truncate text-sm text-text-secondary">{email}</p>
+                                <p className="break-all text-sm text-text-secondary">{email}</p>
                                 {overview && (
                                   <p className="mt-1 text-caption font-medium text-accent">
                                     {overview.plan.name} plan
@@ -960,13 +968,13 @@ export default function BillingSettings({
                         )}
 
                         {section === 'billing' && overview && (
-                          <>
+                          <div className="flex flex-col gap-6">
                             <Card>
-                              <div className="px-5 py-4">
-                                <p className="text-sm font-semibold tracking-[-0.02em]">
+                              <div className="px-4 py-4 md:px-5">
+                                <p className="break-words text-sm font-semibold tracking-[-0.02em]">
                                   {overview.plan.name}
                                 </p>
-                                <p className="mt-1 text-sm text-text-secondary">
+                                <p className="mt-1 break-words text-sm text-text-secondary">
                                   {formatPrice(
                                     overview.plan.priceMonthlyCents,
                                     overview.plan.priceYearlyCents,
@@ -986,19 +994,19 @@ export default function BillingSettings({
                             </Card>
 
                             <Card title="Usage this period" description="Monthly limits for your plan">
-                              <div className="grid gap-4 px-5 py-4">
+                              <div className="flex flex-col gap-3 px-4 py-4 md:grid md:gap-4 md:px-5">
                                 {overview.remaining
                                   .filter((row) => row.unlimited || row.limit > 0)
                                   .map((row) => (
-                                  <QuotaRow key={row.metric} row={row} />
+                                  <QuotaRow key={row.metric} row={row} mobileCard />
                                 ))}
                               </div>
                             </Card>
 
                             {(overview.razorpayEnabled || overview.stripeEnabled) && (
                             <Card title="Payment & portal">
-                              <div className="px-5 py-4">
-                                <p className="mb-4 text-sm leading-relaxed text-text-secondary">
+                              <div className="px-4 py-4 md:px-5">
+                                <p className="mb-4 break-words text-sm leading-relaxed text-text-secondary">
                                   {overview.razorpayEnabled && overview.stripeEnabled
                                     ? 'Manage payment methods via Razorpay or Stripe depending on your subscription.'
                                     : overview.razorpayEnabled
@@ -1021,8 +1029,8 @@ export default function BillingSettings({
                             </Card>
                             )}
 
-                            <section className="space-y-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
+                            <section className="flex flex-col gap-4">
+                              <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
                                 <h3 className="text-sm font-semibold tracking-[-0.02em]">Plans</h3>
                                 <Segmented
                                   value={billingInterval}
@@ -1033,7 +1041,7 @@ export default function BillingSettings({
                                   ]}
                                 />
                               </div>
-                              <div className="grid gap-3">
+                              <div className="flex flex-col gap-3 md:grid md:grid-cols-2 md:gap-4">
                                 {overview.plans.map((plan) => (
                                   <PlanCard
                                     key={plan.planId}
@@ -1048,7 +1056,7 @@ export default function BillingSettings({
                               </div>
                             </section>
 
-                            <section className="space-y-3">
+                            <section className="flex flex-col gap-3">
                               <h3 className="text-sm font-semibold tracking-[-0.02em]">Invoices</h3>
                               {invoices.length === 0 ? (
                                 <PremiumEmpty
@@ -1068,14 +1076,14 @@ export default function BillingSettings({
                             </section>
 
                             <Card className="border-danger/20">
-                              <div className="px-5 py-4">
+                              <div className="px-4 py-4 md:px-5">
                                 <div className="mb-2 flex items-center gap-2">
-                                  <AlertTriangle size={15} className="text-danger" />
+                                  <AlertTriangle size={15} className="shrink-0 text-danger" />
                                   <h3 className="text-sm font-semibold tracking-[-0.02em] text-danger">
                                     Cancel subscription
                                   </h3>
                                 </div>
-                                <p className="mb-4 text-sm leading-relaxed text-text-secondary">
+                                <p className="mb-4 break-words text-sm leading-relaxed text-text-secondary">
                                   {overview.plan.planId === 'free'
                                     ? 'You are on the free plan. There is nothing to cancel.'
                                     : overview.subscription.cancelAtPeriodEnd
@@ -1106,7 +1114,7 @@ export default function BillingSettings({
                                   )}
                               </div>
                             </Card>
-                          </>
+                          </div>
                         )}
                       </motion.div>
                     </AnimatePresence>

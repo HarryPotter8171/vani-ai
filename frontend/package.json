@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -H 0.0.0.0",
     "build": "next build",
+    "build:capacitor": "CAPACITOR_BUILD=true next build",
     "start": "next start -H 0.0.0.0",
     "lint": "eslint",
     "test": "vitest run",
@@ -15,6 +16,9 @@
     "sample:pdf-i18n": "npx --yes vite-node scripts/generateMultilingualPdfSample.mts"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "@sentry/nextjs": "^10.69.0",
     "clsx": "^2.1.1",
     "docx": "^9.7.1",

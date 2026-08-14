@@ -1922,7 +1922,7 @@ export default function ChatPage() {
       onNewChat={handleNewChat}
     >
       <KeyboardShortcutsProvider onVoice={openVoiceMode} onNewChat={handleNewChat}>
-    <div className="relative flex h-dvh max-h-dvh w-full min-w-0 overflow-hidden">
+    <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
       {/* Ambient background — breathing mesh + floating light blobs */}
       <div className="app-background" aria-hidden="true">
         <div className="app-background-blobs">
@@ -2069,8 +2069,8 @@ export default function ChatPage() {
             <div
               className={
                 isEmptyHome
-                  ? 'vani-chat-column flex w-full min-w-0 flex-col py-10 scroll-mt-0 max-md:pb-[calc(8rem+env(safe-area-inset-bottom,0px))] max-md:pt-[max(4rem,calc(env(safe-area-inset-top)+3rem))]'
-                  : 'vani-chat-column flex min-w-0 flex-col pt-6 md:pt-8 scroll-mt-0 max-md:pt-[max(3.5rem,calc(env(safe-area-inset-top)+2.75rem))]'
+                  ? 'vani-chat-column flex w-full min-w-0 flex-col px-4 py-10 scroll-mt-0 md:px-8 max-md:pb-[calc(8rem+env(safe-area-inset-bottom,0px))] max-md:pt-[max(4.5rem,calc(env(safe-area-inset-top,0px)+3.5rem))]'
+                  : 'vani-chat-column flex min-w-0 flex-col px-4 pt-6 scroll-mt-0 md:px-8 md:pt-8 max-md:pt-[max(4rem,calc(env(safe-area-inset-top,0px)+3rem))]'
               }
               style={{ paddingBottom: scrollBottomInset }}
             >

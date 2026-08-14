@@ -26,6 +26,7 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
   width: 'device-width',
   initialScale: 1,
+  maximumScale: 1,
   themeColor: [
     { media: '(prefers-color-scheme: dark)', color: '#0c0c0f' },
     { media: '(prefers-color-scheme: light)', color: '#f2f0eb' },
@@ -43,9 +44,15 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+        />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body
+        className={`${inter.variable} box-border flex h-dvh flex-col overflow-hidden font-sans antialiased pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]`}
+      >
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[300] focus:rounded-full focus:bg-foreground focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-background focus:shadow-2"
@@ -54,18 +61,20 @@ export default function RootLayout({
         </a>
         <MonitoringInit />
         <AudioUnlockInit />
-        <AuthProvider>
-          <ThemeProvider>
-            <ToastProvider>
-              <OfflineBanner />
-              <ConfirmDialogProvider>
-                <AuthErrorBoundary>
-                  <AuthGate>{children}</AuthGate>
-                </AuthErrorBoundary>
-              </ConfirmDialogProvider>
-            </ToastProvider>
-          </ThemeProvider>
-        </AuthProvider>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <AuthProvider>
+            <ThemeProvider>
+              <ToastProvider>
+                <OfflineBanner />
+                <ConfirmDialogProvider>
+                  <AuthErrorBoundary>
+                    <AuthGate>{children}</AuthGate>
+                  </AuthErrorBoundary>
+                </ConfirmDialogProvider>
+              </ToastProvider>
+            </ThemeProvider>
+          </AuthProvider>
+        </div>
       </body>
     </html>
   );

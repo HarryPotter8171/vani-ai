@@ -335,7 +335,7 @@ function MessageComponent({
       >
         {isUser ? (
           <div
-            className="group/user relative flex w-fit max-w-[min(88%,100%)] min-w-0 flex-col items-end gap-2 md:max-w-[70%]"
+            className="group/user relative flex w-fit max-w-[min(85%,100%)] min-w-0 flex-col items-end gap-2 md:max-w-[70%]"
             {...longPressHandlers}
           >
             {imageAttachments.length > 0 && (

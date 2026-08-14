@@ -59,12 +59,16 @@ function contentSecurityPolicy(): string {
   ].join('; ');
 }
 
+/** Capacitor / Android APK builds need a static export (`out/`). Docker keeps standalone. */
+const isCapacitorBuild = process.env.CAPACITOR_BUILD === 'true';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Self-contained build output (server + only the node_modules it actually
   // needs) — required for the production Docker image (see Dockerfile).
-  // No effect on `next dev`.
-  output: 'standalone',
+  // Capacitor: `CAPACITOR_BUILD=true next build` → static `out/` for the WebView.
+  output: isCapacitorBuild ? 'export' : 'standalone',
+  ...(isCapacitorBuild ? { images: { unoptimized: true } } : {}),
   // Allow phone / LAN access to Next.js dev resources (/_next/*).
   // Without this, Next 16 blocks cross-origin requests from the LAN IP and
   // the client never hydrates — AuthGate stays on "Loading…" forever.
@@ -88,26 +92,30 @@ const nextConfig = {
   },
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
-  async headers() {
-    return [
-      {
-        source: '/:path*',
-        headers: [
-          {
-            key: 'Content-Security-Policy',
-            value: contentSecurityPolicy(),
-          },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'DENY' },
-          { key: 'Referrer-Policy', value: 'no-referrer' },
-          {
-            key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(self), geolocation=()',
-          },
-        ],
-      },
-    ];
-  },
+  ...(isCapacitorBuild
+    ? {}
+    : {
+        async headers() {
+          return [
+            {
+              source: '/:path*',
+              headers: [
+                {
+                  key: 'Content-Security-Policy',
+                  value: contentSecurityPolicy(),
+                },
+                { key: 'X-Content-Type-Options', value: 'nosniff' },
+                { key: 'X-Frame-Options', value: 'DENY' },
+                { key: 'Referrer-Policy', value: 'no-referrer' },
+                {
+                  key: 'Permissions-Policy',
+                  value: 'camera=(), microphone=(self), geolocation=()',
+                },
+              ],
+            },
+          ];
+        },
+      }),
 };
 
 export default nextConfig;

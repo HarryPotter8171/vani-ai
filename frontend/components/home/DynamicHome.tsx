@@ -36,7 +36,7 @@ export default function DynamicHome(_props: DynamicHomeProps) {
       initial={{ opacity: 0, y: 0 }}
       animate={{ opacity: 1, y: -14 }}
       transition={{ duration: 0.4, ease: EASE.smooth }}
-      className="mx-auto w-full max-w-full px-1 sm:px-0 md:max-w-3xl lg:max-w-[800px]"
+      className="mx-auto w-full max-w-full px-2 sm:px-0 md:max-w-3xl lg:max-w-[800px]"
     >
       <div className="flex flex-col items-center px-2 text-center max-md:pt-2 sm:px-0">
         <motion.div

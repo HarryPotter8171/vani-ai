@@ -137,7 +137,7 @@
   --text-chat: var(--type-chat);
   /* Conversation column — shared by messages + composer */
   --chat-column-max: 800px;
-  --chat-column-pad-x: 24px;
+  --chat-column-pad-x: 16px;
   --text-assistant: var(--type-assistant);
   --text-user: var(--type-user);
   --text-meta: var(--type-meta);
@@ -1287,6 +1287,19 @@ html.dark .vani-composer:focus-within {
   border-bottom: 1px solid var(--divider);
 }
 
+@media (max-width: 767px) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .settings-row > :last-child {
+    width: 100%;
+  }
+}
+
 .settings-row:last-child {
   border-bottom: none;
 }
@@ -1319,16 +1332,13 @@ html.dark .vani-composer:focus-within {
   max-width: var(--chat-column-max);
   margin-left: auto;
   margin-right: auto;
-  padding-left: max(var(--chat-column-pad-x), env(safe-area-inset-left, 0px));
-  padding-right: max(var(--chat-column-pad-x), env(safe-area-inset-right, 0px));
   box-sizing: border-box;
   min-width: 0;
 }
 
-@media (max-width: 420px) {
+@media (min-width: 768px) {
   :root {
-    --chat-column-pad-x: 12px;
-    --chat-column-max: 100%;
+    --chat-column-pad-x: 32px;
   }
 }
 
