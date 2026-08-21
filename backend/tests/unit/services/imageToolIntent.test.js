@@ -24,6 +24,23 @@ describe("detectImageToolIntent", () => {
     });
   });
 
+  it("forces image_generation for colloquial picture requests", () => {
+    const cases = [
+      "give me modi picture",
+      "give me a picture of modi",
+      "show me modi picture",
+      "get me an image of a sunset",
+      "picture of a mountain lake",
+      "i want a photo of a dog",
+    ];
+    for (const msg of cases) {
+      expect(detectImageToolIntent(msg), msg).toEqual({
+        tool: "image_generation",
+        mode: "force",
+      });
+    }
+  });
+
   it("forces image_edit for common edit intents when an image is attached", () => {
     const cases = [
       "add a dog",

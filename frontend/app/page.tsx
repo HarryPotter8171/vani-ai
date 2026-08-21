@@ -82,6 +82,10 @@ import { fetchAnalyticsIdentity } from '@/lib/analytics';
 import { useVisualViewport } from '@/hooks/useVisualViewport';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { CompactControlSkeleton } from '@/components/lazy/PanelSkeletons';
+// New shell components
+import MobileAppShell from '@/components/layout/mobile/MobileAppShell';
+import DesktopAppShell from '@/components/layout/desktop/DesktopAppShell';
+import SharedChatLayout from '@/components/layout/SharedChatLayout';
 
 const VoiceModeHost = dynamic(() => import('@/components/voice/VoiceModeHost'), {
   ssr: false,
@@ -653,6 +657,45 @@ export default function ChatPage() {
     setComposerHeight((prev) => (Math.abs(prev - height) < 0.5 ? prev : height));
   }, []);
   const isDesktop = useIsDesktop();
+
+  // Prepare shared chat layout props
+  const sharedChatLayoutProps = {
+    messages,
+    chatId,
+    isLoading,
+    isChatLoading,
+    scrollParentRef: messagesContainerRef,
+    activeArtifactId,
+    onOpenArtifact: handleOpenArtifact,
+    onArtifactsDetected: handleArtifactsDetected,
+    onForgetMemory: forgetMemory,
+    onRegenerate: regenerateMessage,
+    onContinue: continueGenerating,
+    onRetry: retryFailedMessage,
+    onEditPrompt: handleEditPrompt,
+    onEditAndResend: editAndResend,
+    onFeedback: handleFeedback,
+    onOpenInCanvas: handleOpenInCanvas,
+    onShareMessage: handleShareMessage,
+    onPinMessage: handlePinMessage,
+    onSaveResponse: handleSaveResponse,
+    onExportMarkdown: handleExportMarkdown,
+    onExportPdf: handleExportPdf,
+    onDeleteResponse: handleDeleteResponse,
+    regenerateDisabled: isLoading,
+    ttsMessageId: ttsMessageId,
+    ttsState: ttsState,
+    ttsParagraphIndex: ttsParagraphIndex,
+    onReadAloud: handleReadAloud,
+    onPauseAloud: handlePauseAloud,
+    onStopAloud: handleStopAloud,
+    onNewChat: handleNewChat,
+    onOpenCanvas: () => void createCanvasAndOpen({ type: 'markdown', title: 'Untitled' }),
+    onOpenImages: handleOpenImages,
+    onOpenResearch: handleOpenResearchWorkspace,
+    onOpenAutomation: handleOpenAutomation,
+    showWelcome: isEmptyHome,
+  };
   const { keyboardInset } = useVisualViewport();
   const mobileKeyboardInset = !isDesktop ? keyboardInset : 0;
   const messagesBottomInset =
@@ -1922,41 +1965,42 @@ export default function ChatPage() {
       onNewChat={handleNewChat}
     >
       <KeyboardShortcutsProvider onVoice={openVoiceMode} onNewChat={handleNewChat}>
-    <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
-      {/* Ambient background — breathing mesh + floating light blobs */}
-      <div className="app-background" aria-hidden="true">
-        <div className="app-background-blobs">
-          <span />
-          <span />
-          <span />
-        </div>
-      </div>
+        <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
+          {/* Ambient background — breathing mesh + floating light blobs */}
+          <div className="app-background" aria-hidden="true">
+            <div className="app-background-blobs">
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
 
-    <div className="relative z-10 flex h-full w-full min-w-0 flex-col pt-2 md:flex-row md:pt-0"
-      onDragEnter={(e) => {
-        e.preventDefault();
-        pageDragDepthRef.current += 1;
-        if (e.dataTransfer?.types?.includes('Files')) {
-          // Preview handled by composer; page-level capture for empty chrome
-        }
-      }}
-      onDragOver={(e) => {
-        if (e.dataTransfer?.types?.includes('Files')) {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'copy';
-        }
-      }}
-      onDrop={(e) => {
-        if (!e.dataTransfer?.files?.length) return;
-        // Only intercept when drop target isn't the composer form
-        const target = e.target as HTMLElement | null;
-        if (target?.closest?.('form')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        pageDragDepthRef.current = 0;
-        handleFilesDropped(e.dataTransfer.files);
-      }}
-    >
+          <div
+            className="relative z-10 flex h-full w-full min-w-0 flex-col pt-2 md:flex-row md:pt-0"
+            onDragEnter={(e) => {
+              e.preventDefault();
+              pageDragDepthRef.current += 1;
+              if (e.dataTransfer?.types?.includes('Files')) {
+                // Preview handled by composer; page-level capture for empty chrome
+              }
+            }}
+            onDragOver={(e) => {
+              if (e.dataTransfer?.types?.includes('Files')) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+              }
+            }}
+            onDrop={(e) => {
+              if (!e.dataTransfer?.files?.length) return;
+              // Only intercept when drop target isn't the composer form
+              const target = e.target as HTMLElement | null;
+              if (target?.closest?.('form')) return;
+              e.preventDefault();
+              e.stopPropagation();
+              pageDragDepthRef.current = 0;
+              handleFilesDropped(e.dataTransfer.files);
+            }}
+          >
         {/* Left-edge swipe zone — open drawer on mobile */}
         {!isDesktop && !isSidebarOpen ? (
           <div

@@ -47,7 +47,7 @@ function contentSecurityPolicy(): string {
     "form-action 'self'",
     scriptSrc,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:",
+    "img-src 'self' data: blob: https: http://localhost:* http://127.0.0.1:*",
     "font-src 'self' data:",
     // Local Express is http://host:5001 — voice uses ws:// (not wss). Host
     // sources like http://localhost:* do NOT cover the ws: scheme, so without

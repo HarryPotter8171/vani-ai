@@ -8,6 +8,71 @@ import {
 } from "./personality.js";
 import { guardAgentEventStream } from "./identity/IdentityGuard.js";
 
+/**
+ * Detect the script style from user text input.
+ * Returns: 'devanagari' | 'roman' | 'english' | 'mixed'
+ */
+function detectScriptStyle(text) {
+  if (!text || typeof text !== 'string') return 'english';
+  
+  const hasDevanagari = /[\u0900-\u097F]/.test(text);
+  const hasLatin = /[A-Za-z]/.test(text);
+  
+  // Common Roman Hindi/Hinglish words for detection
+  const commonHindiWords = /\b(acha|achha|bhai|batao|bata|kya|kis|hai|hain|kaise|main|mujhe|tumhe|usne|unhone|isme|usme|ye|wo|iska|uska|unki|bhi|kri|kar|karo|diya|di|lega|legi|denge|dena|do|de|se|ke|ka|ki|par|lekin|magar|agar|warna|to|hi|theek|theek|kahan|kahan|kaise|kaise|kab|kab|kyun|kyun|sab|sab kuch|kuch|mein|mein|tum|tum|hamein|hamein|unhe|unhe|usko|usko|mera|mera|tera|tera|uska|uska|hamara|hamara|aapka|aapka|yeh|yeh|voh|voh|nahi|nahi|haan|haan|ji|ji|please|please|thanks|thanks|sorry|sorry|okay|okay|theek|theek|accha|accha|bahut|bahut|zyada|zyada|kam|kam|aur|aur|ya|ya|phir|phir|tab|tab|jab|jab|tak|tak|tak|tak|tak|agar|agar|to|to|warna|warna|magar|magar|lekin|lekin|par|par|iske|iske|uske|uske|unki|unki|meri|meri|teri|teri|uski|uski|hamari|hamari|aapki|aapki)\b/i.test(text);
+  
+  if (hasDevanagari && !hasLatin) return 'devanagari';
+  if (hasDevanagari && hasLatin) return 'mixed';
+  if (hasLatin && commonHindiWords) return 'roman';
+  if (hasLatin) return 'english';
+  return 'english';
+}
+
+/**
+ * Build language instruction based on detected script style.
+ */
+function buildLanguageInstruction(userMessage, voiceMode) {
+  if (voiceMode) {
+    return `
+LANGUAGE
+- Auto-detect Hindi, English, or Hinglish. Reply in the same language/mix.
+- Do not suddenly switch languages. Do not translate unless asked.
+`;
+  }
+  
+  const scriptStyle = detectScriptStyle(userMessage);
+  
+  switch (scriptStyle) {
+    case 'devanagari':
+      return `
+LANGUAGE
+- The user wrote in Devanagari Hindi (हिंदी). Reply in Devanagari Hindi.
+- Preserve technical terms, numbers, URLs, code, and file names in their original form.
+`;
+    case 'roman':
+      return `
+LANGUAGE
+- The user wrote in Roman Hindi/Hinglish (Hindi using Latin characters like "batao", "kya hai"). Reply in Roman Hindi/Hinglish using the same script style.
+- Example: If user writes "batao", respond with "bataunga" not "बताऊँगा".
+- Preserve technical terms, numbers, URLs, code, and file names in their original form.
+- If user mixes English and Roman Hindi, preserve that Hinglish style.
+`;
+    case 'mixed':
+      return `
+LANGUAGE
+- The user mixed Devanagari Hindi and Latin script. Preserve this mixed style in your response.
+- Preserve technical terms, numbers, URLs, code, and file names in their original form.
+`;
+    case 'english':
+    default:
+      return `
+LANGUAGE
+- The user wrote in English. Reply in English.
+- Preserve technical terms, numbers, URLs, code, and file names in their original form.
+`;
+  }
+}
+
 const IMAGE_CAPABILITIES = `
 IMAGE CAPABILITIES (ALWAYS AVAILABLE — YOU ARE NOT TEXT-ONLY):
 VANI AI supports image generation, image editing, OCR text extraction, vision analysis, file uploads, and inline image rendering in chat.
@@ -81,8 +146,9 @@ function contentsHaveVision(contents) {
   );
 }
 
-function buildSystemInstruction(userName, { hasVision, projectExtras, memoryExtras, voiceMode } = {}) {
+function buildSystemInstruction(userName, { hasVision, projectExtras, memoryExtras, voiceMode, userMessage } = {}) {
   const currentDate = new Date().toDateString();
+  const languageInstruction = buildLanguageInstruction(userMessage, voiceMode);
 
   const voiceBlock = voiceMode
     ? `
@@ -123,7 +189,7 @@ LANGUAGE
 IDENTITY (voice)
 - Who are you → "I'm VANI AI." Never mention Gemini, ChatGPT, OpenAI, Google, or underlying models.
 - Are you human? → "No. I'm VANI AI — an AI, but I keep things natural."
-- Who made you / who created you → "I was developed by Himanshu Gupta."
+- Who made you / who created you / Tumhe kisne banaya? → "I was developed by Himanshu Gupta. I'm VANI AI, an AI assistant." Match the user's language/script.
 - Are you Gemini? → "No. I'm VANI AI."
 - Are you ChatGPT? → "No. I'm VANI AI."
 - Same for Claude / Llama / Google AI / OpenAI → "No. I'm VANI AI."
@@ -180,6 +246,8 @@ ${memoryExtras ? `${memoryExtras}\n` : ""}
 ${projectExtras ? `${projectExtras}\n` : ""}
 ${voiceBlock}
 ${VANI_CHAT_PERSONALITY}
+
+${languageInstruction}
 
 WRITING STYLE:
 ${
@@ -250,6 +318,7 @@ export async function* streamAgentReply({
     projectExtras,
     memoryExtras: `${memoryExtras || ""}${webSearchExtras ? `\n${webSearchExtras}` : ""}`,
     voiceMode: !!voiceMode,
+    userMessage,
   });
 
   // Identity Guard wraps EVERY model event stream (chat + voice).
@@ -295,4 +364,4 @@ export async function* generateReplyStream(messages, userName = "User") {
   yield* streamPreparedContents(contents, userName);
 }
 
-export { buildSystemInstruction, IMAGE_CAPABILITIES, TOOL_INSTRUCTION };
+export { buildSystemInstruction, IMAGE_CAPABILITIES, TOOL_INSTRUCTION, detectScriptStyle };

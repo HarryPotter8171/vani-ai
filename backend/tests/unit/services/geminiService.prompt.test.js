@@ -2,10 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   buildSystemInstruction,
   IMAGE_CAPABILITIES,
+  detectScriptStyle,
 } from "../../../services/geminiService.js";
 import {
   VANI_IDENTITY_LOCK,
   VANI_IDENTITY_SYSTEM,
+  VANI_IDENTITY_PREFIX,
 } from "../../../services/identity.js";
 
 describe("geminiService system prompt — image tool awareness", () => {
@@ -53,11 +55,12 @@ describe("geminiService system prompt — image tool awareness", () => {
 });
 
 describe("geminiService system prompt — VANI identity", () => {
-  it("locks identity to VANI AI and Himanshu Gupta via shared module", () => {
+  it("locks identity to VANI AI and only mentions creator when asked", () => {
     const prompt = buildSystemInstruction("Alex", {});
     expect(prompt.startsWith(VANI_IDENTITY_SYSTEM)).toBe(true);
     expect(prompt).toContain("I'm VANI AI.");
-    expect(prompt).toContain("I was developed by Himanshu Gupta.");
+    expect(prompt).toContain("NEVER proactively mention your creator/developer in normal conversation");
+    expect(prompt).toContain("unless the user specifically asks");
     expect(prompt).toContain('If asked "Are you Gemini?" reply: "No. I\'m VANI AI."');
     expect(prompt).toContain('If asked "Are you ChatGPT?" reply: "No. I\'m VANI AI."');
     expect(prompt).not.toContain("I may use different AI technologies");
@@ -123,5 +126,133 @@ describe("shared identity module", () => {
     expect(VANI_IDENTITY_LOCK).toContain('Are you ChatGPT?" reply: "No. I\'m VANI AI."');
     expect(VANI_IDENTITY_LOCK).not.toMatch(/You are Gemini/i);
     expect(VANI_IDENTITY_SYSTEM).not.toMatch(/You are Gemini/i);
+  });
+
+  it("only mentions creator when specifically asked in identity lock", () => {
+    expect(VANI_IDENTITY_LOCK).toContain("If asked");
+    expect(VANI_IDENTITY_LOCK).toContain("Who made you");
+    expect(VANI_IDENTITY_LOCK).toContain("Who created you");
+    expect(VANI_IDENTITY_LOCK).toContain("Tumhe kisne banaya");
+    expect(VANI_IDENTITY_LOCK).toContain("VANI ko kisne banaya");
+  });
+
+  it("only mentions creator when specifically asked in identity system", () => {
+    expect(VANI_IDENTITY_SYSTEM).toContain("NEVER proactively mention your creator/developer");
+    expect(VANI_IDENTITY_SYSTEM).toContain("unless the user specifically asks");
+    expect(VANI_IDENTITY_SYSTEM).toContain("Who made you");
+    expect(VANI_IDENTITY_SYSTEM).toContain("Who created you");
+    expect(VANI_IDENTITY_SYSTEM).toContain("Who is your developer");
+    expect(VANI_IDENTITY_SYSTEM).toContain("Tumhe kisne banaya");
+    expect(VANI_IDENTITY_SYSTEM).toContain("VANI ko kisne banaya");
+    expect(VANI_IDENTITY_SYSTEM).toContain("Tumhara creator kaun hai");
+  });
+
+  it("identity prefix does not include creator name proactively", () => {
+    expect(VANI_IDENTITY_PREFIX).toContain("You are VANI AI");
+    expect(VANI_IDENTITY_PREFIX).not.toContain("created by");
+    expect(VANI_IDENTITY_PREFIX).not.toContain("Himanshu Gupta");
+  });
+});
+
+describe("script style detection", () => {
+  it("detects Roman Hindi/Hinglish input", () => {
+    expect(detectScriptStyle("iske bare m sab batao")).toBe("roman");
+    expect(detectScriptStyle("mujhe iska summary do")).toBe("roman");
+    expect(detectScriptStyle("bhai explain this document")).toBe("roman");
+    expect(detectScriptStyle("kya hai ye")).toBe("roman");
+    expect(detectScriptStyle("acha batao")).toBe("roman");
+    expect(detectScriptStyle("theek hai")).toBe("roman");
+  });
+
+  it("detects Devanagari Hindi input", () => {
+    expect(detectScriptStyle("इस दस्तावेज़ के बारे में बताओ")).toBe("devanagari");
+    expect(detectScriptStyle("क्या है यह")).toBe("devanagari");
+    expect(detectScriptStyle("मुझे सारांश दो")).toBe("devanagari");
+  });
+
+  it("detects English input", () => {
+    expect(detectScriptStyle("what is this document about?")).toBe("english");
+    expect(detectScriptStyle("Hello, how are you?")).toBe("english");
+    expect(detectScriptStyle("Explain this")).toBe("english");
+  });
+
+  it("detects mixed script input", () => {
+    expect(detectScriptStyle("यह document के बारे में बताओ")).toBe("mixed");
+    expect(detectScriptStyle("What is यह thing")).toBe("mixed");
+  });
+
+  it("handles edge cases", () => {
+    expect(detectScriptStyle("")).toBe("english");
+    expect(detectScriptStyle(null)).toBe("english");
+    expect(detectScriptStyle(undefined)).toBe("english");
+    expect(detectScriptStyle("123")).toBe("english");
+  });
+});
+
+describe("language instruction generation", () => {
+  it("generates Roman Hindi instruction for Roman Hindi input", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "iske bare m sab batao" });
+    expect(prompt).toContain("Roman Hindi/Hinglish");
+    expect(prompt).toContain("batao");
+    expect(prompt).toContain("bataunga");
+    expect(prompt).toContain("same script style");
+  });
+
+  it("generates Devanagari instruction for Devanagari input", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "इस दस्तावेज़ के बारे में बताओ" });
+    expect(prompt).toContain("Devanagari Hindi");
+    expect(prompt).toContain("हिंदी");
+  });
+
+  it("generates English instruction for English input", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "what is this document about?" });
+    expect(prompt).toContain("Reply in English");
+  });
+
+  it("generates mixed script instruction for mixed input", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "यह document के बारे में बताओ" });
+    expect(prompt).toContain("mixed style");
+  });
+
+  it("preserves voice mode language instructions", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "batao", voiceMode: true });
+    expect(prompt).toContain("Auto-detect Hindi, English, or Hinglish");
+    expect(prompt).toContain("Reply in the same language/mix");
+  });
+});
+
+describe("creator mention behavior", () => {
+  it("does NOT proactively mention creator in normal conversation", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "hello, how are you?" });
+    expect(prompt).toContain("NEVER proactively mention your creator/developer in normal conversation");
+    expect(prompt).toContain("unless the user specifically asks");
+  });
+
+  it("includes specific creator question handling instructions", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "who are you?" });
+    expect(prompt).toContain("Who made you");
+    expect(prompt).toContain("Who created you");
+    expect(prompt).toContain("Who is your developer");
+    expect(prompt).toContain("Tumhe kisne banaya");
+    expect(prompt).toContain("VANI ko kisne banaya");
+    expect(prompt).toContain("Tumhara creator kaun hai");
+    expect(prompt).toContain("I was developed by Himanshu Gupta");
+    expect(prompt).toContain("I'm VANI AI, an AI assistant");
+  });
+
+  it("instructs to match user's language/script for creator answers", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "Tumhe kisne banaya?" });
+    expect(prompt).toContain("Match the user's language/script");
+    expect(prompt).toContain("Roman Hindi");
+    expect(prompt).toContain("Devanagari");
+    expect(prompt).toContain("English");
+  });
+
+  it("does NOT claim creator is monitoring or controlling", () => {
+    const prompt = buildSystemInstruction("Alex", { userMessage: "hello" });
+    expect(prompt).not.toContain("monitoring");
+    expect(prompt).not.toContain("controlling");
+    expect(prompt).not.toContain("receiving feedback");
+    expect(prompt).not.toContain("personally interacting");
   });
 });

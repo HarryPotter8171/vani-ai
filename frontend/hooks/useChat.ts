@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/apiClient';
 import { fileContentUrl } from '@/lib/upload';
+import { getApiBaseUrl } from '@/lib/constants';
 import type { Message, MessageAttachment, StreamPhase } from '@/lib/types';
 import type { TurnMeta, TurnUsage } from '@/lib/models';
 import {
@@ -552,14 +553,24 @@ export function useChat(options?: UseChatOptions) {
                   )
                 );
               }
-            } else if (event.image?.dataBase64 || event.image?.fileId) {
+            } else if (
+              event.image?.dataBase64 ||
+              event.image?.fileId ||
+              event.image?.imageUrl
+            ) {
               const mimeType = event.image.mimeType || 'image/png';
               const fileId = event.image.fileId || undefined;
               const previewUrl = event.image.dataBase64
                 ? `data:${mimeType};base64,${event.image.dataBase64}`
                 : fileId
                   ? fileContentUrl(fileId)
-                  : undefined;
+                  : event.image.imageUrl
+                    ? event.image.imageUrl.startsWith('http')
+                      ? event.image.imageUrl
+                      : event.image.imageUrl.startsWith('/api/')
+                        ? `${getApiBaseUrl().replace(/\/api\/?$/, '')}${event.image.imageUrl}`
+                        : `${getApiBaseUrl()}/${event.image.imageUrl.replace(/^\//, '')}`
+                    : undefined;
               const generated: MessageAttachment = {
                 id: fileId || `gen-${Date.now()}`,
                 fileId,

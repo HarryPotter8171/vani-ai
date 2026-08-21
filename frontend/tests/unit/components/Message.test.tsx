@@ -107,4 +107,18 @@ describe("Message: assistant bubble", () => {
     render(<Message id="m4" role="assistant" content="Here's the image" attachments={[attachment]} />);
     expect(screen.getByAltText("photo.png")).toBeInTheDocument();
   });
+
+  it("renders an inline image attachment with backend imageUrl", () => {
+    const attachment: MessageAttachment = {
+      id: "img2",
+      fileId: "file-123",
+      name: "generated-image.png",
+      mimeType: "image/png",
+      size: 4096,
+      kind: "image",
+      previewUrl: "http://localhost:5001/api/files/file-123/content?access_token=mock",
+    };
+    render(<Message id="m5" role="assistant" content="Generated image" attachments={[attachment]} />);
+    expect(screen.getByAltText("generated-image.png")).toBeInTheDocument();
+  });
 });

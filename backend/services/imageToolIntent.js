@@ -33,8 +33,20 @@ const HINGLISH_EDIT_RE =
  */
 function looksLikeImageCreateRequest(msg) {
   return (
-    /\b(generate|create|draw|design|illustrate|render|sketch)\b/i.test(msg) &&
-    /\b(image|picture|photo|illustration|artwork|drawing|logo|icon|poster|banner|wallpaper)\b/i.test(
+    (/\b(generate|create|draw|design|illustrate|render|sketch)\b/i.test(msg) &&
+      /\b(image|picture|photo|illustration|artwork|drawing|logo|icon|poster|banner|wallpaper)\b/i.test(
+        msg
+      )) ||
+    /\b(give|show|get|send|fetch)\s+me\b[\s\S]{0,60}\b(an? )?(image|picture|photo|illustration|artwork|drawing|logo|icon|poster|banner|wallpaper)\b/i.test(
+      msg
+    ) ||
+    /\b(give|show|get|send|fetch)\s+me\b[\s\S]{0,60}\b(picture|photo|image|illustration|artwork|drawing|logo|icon|poster|banner|wallpaper)\b/i.test(
+      msg
+    ) ||
+    /\b(an? |the )?(picture|photo|image|illustration|artwork|drawing|logo|icon|poster|banner|wallpaper)\b[\s\S]{0,20}\b(of|showing|depicting|with)\b/i.test(
+      msg
+    ) ||
+    /\bi (want|need|would like)\b[\s\S]{0,48}\b(an? )?(picture|photo|image|illustration|drawing|logo)\b/i.test(
       msg
     )
   );
@@ -88,6 +100,19 @@ function isExplicitNewImageGeneration(msg) {
     /\bmake (an?|me a) (image|picture|photo|illustration|drawing|logo)\b/.test(msg) ||
     // "an image of …" only when paired with a create verb nearby
     /\b(generate|create|draw|design|illustrate|render|sketch|make)\b[\s\S]{0,64}\b(an? )?(image|picture|photo|illustration|artwork|drawing|logo|icon|poster)\b[\s\S]{0,24}\b(of|showing|with|for|that)\b/.test(
+      msg
+    ) ||
+    // Colloquial requests: "give me modi picture", "show me a photo of …"
+    /\b(give|show|get|send|fetch)\s+me\b[\s\S]{0,60}\b(an? )?(image|picture|photo|illustration|artwork|drawing|logo|icon|poster|banner|wallpaper)\b/.test(
+      msg
+    ) ||
+    /\b(give|show|get|send|fetch)\s+me\b[\s\S]{0,60}\b(picture|photo|image|illustration|artwork|drawing|logo|icon|poster|banner|wallpaper)\b/.test(
+      msg
+    ) ||
+    /\b(an? |the )?(picture|photo|image|illustration|artwork|drawing|logo|icon|poster|banner|wallpaper)\b[\s\S]{0,20}\b(of|showing|depicting|with)\b/.test(
+      msg
+    ) ||
+    /\bi (want|need|would like)\b[\s\S]{0,48}\b(an? )?(picture|photo|image|illustration|drawing|logo)\b/.test(
       msg
     )
   );
