@@ -8,7 +8,7 @@ import MobileSidebarDrawer from './MobileSidebarDrawer';
 import MobileChatContainer from './MobileChatContainer';
 import MobileComposer from './MobileComposer';
 import type { ChatSummary, Message, Project } from '@/lib/types';
-import type { AgentTypeInfo } from '@/lib/agents';
+import type { AgentTypeInfo, AgentTypeId } from '@/lib/agents';
 import type { MessageAttachment } from '@/lib/types';
 
 export interface MobileAppShellProps {
@@ -45,8 +45,8 @@ export interface MobileAppShellProps {
   
   // Composer props
   agents?: AgentTypeInfo[];
-  selectedAgent?: string | null;
-  onSelectAgent?: (id: string | null) => void;
+  selectedAgent?: AgentTypeId | null;
+  onSelectAgent?: (id: AgentTypeId | null) => void;
   webSearchEnabled?: boolean;
   deepResearchEnabled?: boolean;
   onToggleWebSearch?: (value: boolean) => void;

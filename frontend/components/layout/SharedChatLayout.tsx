@@ -39,13 +39,24 @@ export interface SharedChatLayoutProps {
   onReadAloud?: (messageId: string, content: string) => void;
   onPauseAloud?: () => void;
   onStopAloud?: () => void;
-  // Empty state props
-  onNewChat?: () => void;
+  // Empty state props - matching DynamicHomeProps
+  onSuggestionClick?: (text: string) => void;
+  recentChats?: unknown[];
+  recentProjects?: unknown[];
+  activeProject?: unknown;
+  knowledgeFiles?: string[];
+  onSelectChat?: (chatId: string) => void;
+  onSelectProject?: (projectId: string) => void;
   onOpenCanvas?: () => void;
+  onOpenVoice?: () => void;
+  onOpenDashboard?: () => void;
+  onOpenMemory?: () => void;
+  showWelcome?: boolean;
+  // New props for quick actions
+  onNewChat?: () => void;
   onOpenImages?: () => void;
   onOpenResearch?: () => void;
   onOpenAutomation?: () => void;
-  showWelcome?: boolean;
 }
 
 /**
@@ -89,8 +100,18 @@ function SharedChatLayout({
   onReadAloud,
   onPauseAloud,
   onStopAloud,
-  onNewChat,
+  onSuggestionClick,
+  recentChats,
+  recentProjects,
+  activeProject,
+  knowledgeFiles,
+  onSelectChat,
+  onSelectProject,
   onOpenCanvas,
+  onOpenVoice,
+  onOpenDashboard,
+  onOpenMemory,
+  onNewChat,
   onOpenImages,
   onOpenResearch,
   onOpenAutomation,
@@ -103,11 +124,17 @@ function SharedChatLayout({
     <>
       {showEmptyState ? (
         <EmptyState
-          onNewChat={onNewChat}
+          onSuggestionClick={onSuggestionClick}
+          recentChats={recentChats}
+          recentProjects={recentProjects}
+          activeProject={activeProject}
+          knowledgeFiles={knowledgeFiles}
+          onSelectChat={onSelectChat}
+          onSelectProject={onSelectProject}
           onOpenCanvas={onOpenCanvas}
-          onOpenImages={onOpenImages}
-          onOpenResearch={onOpenResearch}
-          onOpenAutomation={onOpenAutomation}
+          onOpenVoice={onOpenVoice}
+          onOpenDashboard={onOpenDashboard}
+          onOpenMemory={onOpenMemory}
         />
       ) : (
         <>

@@ -4,7 +4,8 @@ import React, { useState, useRef, useEffect, useCallback, forwardRef, useImperat
 import { Mic, ArrowUp, Square, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useVisualViewport } from '@/hooks/useVisualViewport';
-import type { MessageAttachment, AgentTypeInfo } from '@/lib/types';
+import type { MessageAttachment } from '@/lib/types';
+import type { AgentTypeInfo, AgentTypeId } from '@/lib/agents';
 
 export interface MobileComposerHandle {
   focus: () => void;
@@ -17,8 +18,8 @@ export interface MobileComposerProps {
   onOpenVoiceMode?: () => void;
   onHeightChange?: (height: number) => void;
   agents?: AgentTypeInfo[];
-  selectedAgent?: string | null;
-  onSelectAgent?: (id: string | null) => void;
+  selectedAgent?: AgentTypeId | null;
+  onSelectAgent?: (id: AgentTypeId | null) => void;
   webSearchEnabled?: boolean;
   deepResearchEnabled?: boolean;
   onToggleWebSearch?: (value: boolean) => void;

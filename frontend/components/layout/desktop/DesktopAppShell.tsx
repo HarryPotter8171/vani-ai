@@ -6,7 +6,7 @@ import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import ChatInput, { type ChatInputHandle } from '@/components/ChatInput';
 import type { ChatSummary, Message, Project } from '@/lib/types';
-import type { AgentTypeInfo } from '@/lib/agents';
+import type { AgentTypeInfo, AgentTypeId } from '@/lib/agents';
 import type { MessageAttachment } from '@/lib/types';
 
 export interface DesktopAppShellProps {
@@ -89,8 +89,8 @@ export interface DesktopAppShellProps {
   // Composer props
   chatInputRef: React.RefObject<ChatInputHandle>;
   agents?: AgentTypeInfo[];
-  selectedAgent?: string | null;
-  onSelectAgent?: (id: string | null) => void;
+  selectedAgent?: AgentTypeId | null;
+  onSelectAgent?: (id: AgentTypeId | null) => void;
   webSearchEnabled?: boolean;
   deepResearchEnabled?: boolean;
   onToggleWebSearch?: (value: boolean) => void;

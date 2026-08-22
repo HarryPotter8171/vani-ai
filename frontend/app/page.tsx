@@ -657,45 +657,6 @@ export default function ChatPage() {
     setComposerHeight((prev) => (Math.abs(prev - height) < 0.5 ? prev : height));
   }, []);
   const isDesktop = useIsDesktop();
-
-  // Prepare shared chat layout props
-  const sharedChatLayoutProps = {
-    messages,
-    chatId,
-    isLoading,
-    isChatLoading,
-    scrollParentRef: messagesContainerRef,
-    activeArtifactId,
-    onOpenArtifact: handleOpenArtifact,
-    onArtifactsDetected: handleArtifactsDetected,
-    onForgetMemory: forgetMemory,
-    onRegenerate: regenerateMessage,
-    onContinue: continueGenerating,
-    onRetry: retryFailedMessage,
-    onEditPrompt: handleEditPrompt,
-    onEditAndResend: editAndResend,
-    onFeedback: handleFeedback,
-    onOpenInCanvas: handleOpenInCanvas,
-    onShareMessage: handleShareMessage,
-    onPinMessage: handlePinMessage,
-    onSaveResponse: handleSaveResponse,
-    onExportMarkdown: handleExportMarkdown,
-    onExportPdf: handleExportPdf,
-    onDeleteResponse: handleDeleteResponse,
-    regenerateDisabled: isLoading,
-    ttsMessageId: ttsMessageId,
-    ttsState: ttsState,
-    ttsParagraphIndex: ttsParagraphIndex,
-    onReadAloud: handleReadAloud,
-    onPauseAloud: handlePauseAloud,
-    onStopAloud: handleStopAloud,
-    onNewChat: handleNewChat,
-    onOpenCanvas: () => void createCanvasAndOpen({ type: 'markdown', title: 'Untitled' }),
-    onOpenImages: handleOpenImages,
-    onOpenResearch: handleOpenResearchWorkspace,
-    onOpenAutomation: handleOpenAutomation,
-    showWelcome: isEmptyHome,
-  };
   const { keyboardInset } = useVisualViewport();
   const mobileKeyboardInset = !isDesktop ? keyboardInset : 0;
   const messagesBottomInset =
@@ -1853,6 +1814,52 @@ export default function ChatPage() {
   // Empty home centers hero + inline composer; threads need floating clearance.
   const scrollBottomInset = isEmptyHome ? 32 : messagesBottomInset;
 
+  // Prepare shared chat layout props ( must be after all state and handler declarations)
+  const sharedChatLayoutProps = {
+    messages,
+    chatId,
+    isLoading,
+    isChatLoading,
+    scrollParentRef: messagesContainerRef,
+    activeArtifactId,
+    onOpenArtifact: handleOpenArtifact,
+    onArtifactsDetected: handleArtifactsDetected,
+    onForgetMemory: handleForgetMemory,
+    onRegenerate: handleRegenerate,
+    onContinue: continueGenerating,
+    onRetry: handleRetry,
+    onEditPrompt: undefined, // Not implemented in current version
+    onEditAndResend: handleEditAndResend,
+    onFeedback: handleMessageFeedback,
+    onOpenInCanvas: handleOpenInCanvas,
+    onShareMessage: handleShareMessage,
+    onPinMessage: handlePinMessage,
+    onSaveResponse: handleSaveResponse,
+    onExportMarkdown: handleExportMessageMarkdown,
+    onExportPdf: handleExportMessagePdf,
+    onDeleteResponse: handleDeleteResponse,
+    regenerateDisabled: isLoading,
+    ttsMessageId: ttsMessageId,
+    ttsState: ttsState,
+    ttsParagraphIndex: ttsParagraphIndex,
+    onReadAloud: handleReadAloud,
+    onPauseAloud: pauseTts,
+    onStopAloud: stopTts,
+    // Empty state props - matching DynamicHomeProps
+    onSuggestionClick: undefined, // Not implemented in current version
+    recentChats: recentChats,
+    recentProjects: projects,
+    activeProject: activeProject,
+    knowledgeFiles: undefined, // Not implemented in current version
+    onSelectChat: handleSidebarSelectChat,
+    onSelectProject: handleSidebarSelectProject,
+    onOpenCanvas: () => void createCanvasAndOpen({ type: 'markdown', title: 'Untitled' }),
+    onOpenVoice: openVoiceMode,
+    onOpenDashboard: openAiDashboard,
+    onOpenMemory: openMemory,
+    showWelcome: isEmptyHome,
+  };
+
   const needsContextChrome =
     messages.length > 0 ||
     !!activeProject ||
@@ -2001,6 +2008,49 @@ export default function ChatPage() {
               handleFilesDropped(e.dataTransfer.files);
             }}
           >
+        {/* TEMPORARY: Feature flag for testing new mobile shell */}
+        {false ? (
+          /* New Mobile Shell - Testing Mode */
+          <MobileAppShell
+            messages={messages}
+            chatId={chatId}
+            isLoading={isLoading}
+            isChatLoading={isChatLoading}
+            isSidebarOpen={isSidebarOpen}
+            recentChats={recentChats}
+            isLoadingChats={isLoadingChats}
+            chatsError={chatsError}
+            activeChatId={highlightedChatId}
+            projects={projects}
+            pinnedProjects={pinnedProjects}
+            activeProjectId={activeProjectId}
+            projectChats={projectChats}
+            isCanvasOpen={isCanvasOpen}
+            canvasMobileSurface={canvasMobileSurface}
+            onToggleSidebar={handleToggleSidebar}
+            onCloseSidebar={closeSidebar}
+            onNewChat={handleNewChat}
+            onSelectChat={handleSidebarSelectChat}
+            onSelectProject={handleSidebarSelectProject}
+            onSendMessage={handleSendWithOptionalAgent}
+            onStopGenerating={handleStopOrCancel}
+            onOpenVoiceMode={openVoiceMode}
+            agents={agentTypes}
+            selectedAgent={selectedAgent}
+            onSelectAgent={selectAgent}
+            webSearchEnabled={webSearchEnabled}
+            deepResearchEnabled={deepResearchEnabled}
+            onToggleWebSearch={setWebSearchEnabled}
+            onToggleDeepResearch={setDeepResearchEnabled}
+            selectedModel={selectedModel}
+            onSelectModel={handleSelectModel}
+            projectDefaultModel={projectDefaultModel}
+          >
+            <SharedChatLayout {...sharedChatLayoutProps} />
+          </MobileAppShell>
+        ) : (
+          /* Existing Layout - Desktop and Current Mobile */
+          <>
         {/* Left-edge swipe zone — open drawer on mobile */}
         {!isDesktop && !isSidebarOpen ? (
           <div
@@ -2683,6 +2733,8 @@ export default function ChatPage() {
             </Suspense>
           )}
         </AnimatePresence>
+          </>
+        )}
       </div>
     </div>
       </KeyboardShortcutsProvider>
