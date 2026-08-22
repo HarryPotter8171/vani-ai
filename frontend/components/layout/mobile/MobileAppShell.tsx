@@ -7,9 +7,9 @@ import MobileHeader from './MobileHeader';
 import MobileSidebarDrawer from './MobileSidebarDrawer';
 import MobileChatContainer from './MobileChatContainer';
 import MobileComposer from './MobileComposer';
-import type { ChatSummary, Message, Project } from '@/lib/types';
+import ProjectWorkspaceBar from '@/components/workspace/ProjectWorkspaceBar';
+import type { ChatSummary, Message, Project, MessageAttachment } from '@/lib/types';
 import type { AgentTypeInfo, AgentTypeId } from '@/lib/agents';
-import type { MessageAttachment } from '@/lib/types';
 
 export interface MobileAppShellProps {
   // Chat state
@@ -54,9 +54,16 @@ export interface MobileAppShellProps {
   selectedModel?: string;
   onSelectModel?: (modelKey: string) => void;
   projectDefaultModel?: string | null;
+
+  // Workspace state
+  workspaceTab?: string;
+  activeProject?: Project | null;
+  onNavigateProject?: (dest: string) => void;
+  isEmptyHome?: boolean;
   
   // Additional props for child components
   children?: React.ReactNode;
+  scrollParentRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 /**
@@ -103,25 +110,25 @@ function MobileAppShell({
   selectedModel,
   onSelectModel,
   projectDefaultModel,
+  workspaceTab,
+  activeProject,
+  onNavigateProject,
+  isEmptyHome,
   children,
+  scrollParentRef,
 }: MobileAppShellProps) {
   const [composerHeight, setComposerHeight] = useState(0);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [workspaceBarHeight, setWorkspaceBarHeight] = useState(0);
+  const workspaceBarRef = useRef<HTMLDivElement>(null);
 
-  // Handle keyboard auto-scroll
   useEffect(() => {
-    if (!scrollContainerRef.current) return;
-    
-    const scrollToBottom = () => {
-      const container = scrollContainerRef.current;
-      if (container) {
-        container.scrollTop = container.scrollHeight;
-      }
-    };
-
-    // Scroll to bottom when messages change or when composer opens
-    scrollToBottom();
-  }, [messages.length, isSidebarOpen, composerHeight]);
+    if (!workspaceBarRef.current) return;
+    const ro = new ResizeObserver((entries) => {
+      setWorkspaceBarHeight(entries[0].contentRect.height);
+    });
+    ro.observe(workspaceBarRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   const handleHeightChange = useCallback((height: number) => {
     setComposerHeight(height);
@@ -131,7 +138,7 @@ function MobileAppShell({
   const showMainChat = !isCanvasOpen || canvasMobileSurface === 'chat';
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-screen flex-col bg-background overflow-hidden">
       {/* Mobile Header */}
       <MobileHeader
         onToggleSidebar={onToggleSidebar}
@@ -151,35 +158,49 @@ function MobileAppShell({
         activeProjectId={activeProjectId}
         projectChats={projectChats}
         onNewChat={onNewChat}
-        onSelectChat={(chatId) => {
-          onSelectChat(chatId);
+        onSelectChat={(id) => {
+          onSelectChat(id);
           onCloseSidebar();
         }}
-        onSelectProject={(projectId) => {
-          onSelectProject(projectId);
+        onSelectProject={(id) => {
+          onSelectProject(id);
           onCloseSidebar();
         }}
       />
 
+      {/* Workspace Bar */}
+      {showMainChat && activeProject && !isEmptyHome && onNavigateProject && (
+        <div ref={workspaceBarRef} className="mt-[calc(48px+env(safe-area-inset-top,0px))]">
+          <ProjectWorkspaceBar
+            project={activeProject}
+            active={workspaceTab === 'files' ? 'files' : 'chat'}
+            onNavigate={onNavigateProject}
+          />
+        </div>
+      )}
+
       {/* Main Chat Area */}
       {showMainChat && (
         <MobileChatContainer
-          ref={scrollContainerRef}
+          ref={scrollParentRef}
           messages={messages}
           chatId={chatId}
           isLoading={isLoading}
           isChatLoading={isChatLoading}
           composerHeight={composerHeight}
+          workspaceBarHeight={workspaceBarHeight}
+          // Adjust padding if workspace bar is present
+          className={cn(activeProject && !isEmptyHome && 'pt-0')}
         >
           {children}
         </MobileChatContainer>
       )}
 
       {/* Mobile Composer */}
-      {showMainChat && (
+      {showMainChat && (!isEmptyHome || workspaceTab === 'chat') && (
         <MobileComposer
           onSendMessage={onSendMessage}
-          isLoading={isLoading}
+          isLoading={isLoading || isChatLoading}
           onStopGenerating={onStopGenerating}
           onOpenVoiceMode={onOpenVoiceMode}
           onHeightChange={handleHeightChange}

@@ -8,6 +8,7 @@ import ChatInput, { type ChatInputHandle } from '@/components/ChatInput';
 import type { ChatSummary, Message, Project } from '@/lib/types';
 import type { AgentTypeInfo, AgentTypeId } from '@/lib/agents';
 import type { MessageAttachment } from '@/lib/types';
+import ProjectWorkspaceBar from '@/components/workspace/ProjectWorkspaceBar';
 
 export interface DesktopAppShellProps {
   // Layout state
@@ -85,9 +86,10 @@ export interface DesktopAppShellProps {
   onSendMessage: (message: string, attachments?: MessageAttachment[]) => void;
   onStopGenerating: () => void;
   onOpenVoiceMode: () => void;
+  onHeightChange?: (height: number) => void;
   
   // Composer props
-  chatInputRef: React.RefObject<ChatInputHandle>;
+  chatInputRef: React.RefObject<ChatInputHandle | null>;
   agents?: AgentTypeInfo[];
   selectedAgent?: AgentTypeId | null;
   onSelectAgent?: (id: AgentTypeId | null) => void;
@@ -99,9 +101,17 @@ export interface DesktopAppShellProps {
   onSelectModel?: (modelKey: string) => void;
   projectDefaultModel?: string | null;
   
+  // Workspace state
+  workspaceTab?: string;
+  activeProject?: Project | null;
+  onNavigateProject?: (dest: string) => void;
+  isEmptyHome?: boolean;
+  
   // Additional content
   children?: React.ReactNode;
   dock?: React.ReactNode;
+  scrollParentRef?: React.RefObject<HTMLElement | null>;
+  onScroll?: (event: React.UIEvent<HTMLElement>) => void;
 }
 
 /**
@@ -180,6 +190,7 @@ function DesktopAppShell({
   onSendMessage,
   onStopGenerating,
   onOpenVoiceMode,
+  onHeightChange,
   chatInputRef,
   agents,
   selectedAgent,
@@ -191,8 +202,14 @@ function DesktopAppShell({
   selectedModel,
   onSelectModel,
   projectDefaultModel,
+  workspaceTab,
+  activeProject,
+  onNavigateProject,
+  isEmptyHome,
   children,
   dock,
+  scrollParentRef,
+  onScroll,
 }: DesktopAppShellProps) {
   return (
     <div className="relative z-10 flex h-full w-full min-w-0 flex-col md:flex-row md:pt-0">
@@ -249,7 +266,7 @@ function DesktopAppShell({
         hasArtifact={messages.some(m => m.attachments?.length)}
         isArtifactOpen={isArtifactPanelOpen && !isCanvasOpen}
         onShowArtifact={onShowArtifact}
-        hasCanvas={false} // Will be determined by canvas state
+        hasCanvas={false} // Managed by page.tsx state
         isCanvasOpen={isCanvasOpen}
         onShowCanvas={onShowCanvas}
         hasBrowser={browserPanelOpen}
@@ -273,31 +290,57 @@ function DesktopAppShell({
         )}
       >
         <Header onToggleSidebar={onToggleSidebar} />
+
+        {activeProject && !isEmptyHome && onNavigateProject && (
+          <ProjectWorkspaceBar
+            project={activeProject}
+            active={workspaceTab === 'files' ? 'files' : 'chat'}
+            onNavigate={onNavigateProject}
+          />
+        )}
         
-        {/* Main content area */}
-        <div className="flex-1 overflow-hidden">
-          {children}
-        </div>
+        {/* Messages scroll region */}
+        <main
+          ref={scrollParentRef as React.RefObject<HTMLElement>}
+          onScroll={onScroll}
+          className={cn(
+            'custom-scrollbar relative flex min-h-0 flex-1 overflow-y-auto overflow-x-hidden scroll-smooth',
+            isEmptyHome && 'items-center justify-center'
+          )}
+        >
+          <div
+            className={cn(
+              'vani-chat-column flex w-full min-w-0 flex-col px-4 pt-6 scroll-mt-0 md:px-8 md:pt-8',
+              isEmptyHome ? 'py-10' : 'pb-32'
+            )}
+          >
+            {children}
+          </div>
+        </main>
 
         {/* Desktop Composer */}
-        <ChatInput
-          ref={chatInputRef}
-          onSendMessage={onSendMessage}
-          isLoading={isLoading}
-          onStopGenerating={onStopGenerating}
-          onOpenVoiceMode={onOpenVoiceMode}
-          agents={agents}
-          selectedAgent={selectedAgent}
-          onSelectAgent={onSelectAgent}
-          webSearchEnabled={webSearchEnabled}
-          deepResearchEnabled={deepResearchEnabled}
-          onToggleWebSearch={onToggleWebSearch}
-          onToggleDeepResearch={onToggleDeepResearch}
-          selectedModel={selectedModel}
-          onSelectModel={onSelectModel}
-          projectDefaultModel={projectDefaultModel}
-          dock={dock}
-        />
+        {(!isEmptyHome || workspaceTab === 'chat') && (
+          <ChatInput
+            ref={chatInputRef}
+            placement={isEmptyHome ? 'inline' : 'floating'}
+            onSendMessage={onSendMessage}
+            isLoading={isLoading || isChatLoading}
+            onStopGenerating={onStopGenerating}
+            onOpenVoiceMode={onOpenVoiceMode}
+            onHeightChange={onHeightChange}
+            agents={agents}
+            selectedAgent={selectedAgent}
+            onSelectAgent={onSelectAgent}
+            webSearchEnabled={webSearchEnabled}
+            deepResearchEnabled={deepResearchEnabled}
+            onToggleWebSearch={onToggleWebSearch}
+            onToggleDeepResearch={onToggleDeepResearch}
+            selectedModel={selectedModel}
+            onSelectModel={onSelectModel}
+            projectDefaultModel={projectDefaultModel}
+            dock={dock}
+          />
+        )}
       </div>
     </div>
   );

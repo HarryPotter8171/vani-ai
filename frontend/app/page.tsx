@@ -85,7 +85,7 @@ import { CompactControlSkeleton } from '@/components/lazy/PanelSkeletons';
 // New shell components
 import MobileAppShell from '@/components/layout/mobile/MobileAppShell';
 import DesktopAppShell from '@/components/layout/desktop/DesktopAppShell';
-import SharedChatLayout from '@/components/layout/SharedChatLayout';
+import SharedChatLayout, { type SharedChatLayoutProps } from '@/components/layout/SharedChatLayout';
 
 const VoiceModeHost = dynamic(() => import('@/components/voice/VoiceModeHost'), {
   ssr: false,
@@ -1815,7 +1815,7 @@ export default function ChatPage() {
   const scrollBottomInset = isEmptyHome ? 32 : messagesBottomInset;
 
   // Prepare shared chat layout props ( must be after all state and handler declarations)
-  const sharedChatLayoutProps = {
+  const sharedChatLayoutProps: SharedChatLayoutProps = {
     messages,
     chatId,
     isLoading,
@@ -1826,9 +1826,8 @@ export default function ChatPage() {
     onArtifactsDetected: handleArtifactsDetected,
     onForgetMemory: handleForgetMemory,
     onRegenerate: handleRegenerate,
-    onContinue: continueGenerating,
+    onContinue: handleContinue,
     onRetry: handleRetry,
-    onEditPrompt: undefined, // Not implemented in current version
     onEditAndResend: handleEditAndResend,
     onFeedback: handleMessageFeedback,
     onOpenInCanvas: handleOpenInCanvas,
@@ -1845,8 +1844,8 @@ export default function ChatPage() {
     onReadAloud: handleReadAloud,
     onPauseAloud: pauseTts,
     onStopAloud: stopTts,
-    // Empty state props - matching DynamicHomeProps
-    onSuggestionClick: undefined, // Not implemented in current version
+    // Empty state props
+    onSuggestionClick: onSuggestionClick,
     recentChats: recentChats,
     recentProjects: projects,
     activeProject: activeProject,
@@ -1858,6 +1857,62 @@ export default function ChatPage() {
     onOpenDashboard: openAiDashboard,
     onOpenMemory: openMemory,
     showWelcome: isEmptyHome,
+    // Workspace state
+    workspaceTab,
+    activeProjectId,
+    mainFiles: {
+      files: mainFiles.files,
+      loading: mainFiles.loading,
+      refresh: mainFiles.refresh,
+    },
+    onUploadKnowledge: activeProjectId
+      ? async (file) => {
+          await uploadKnowledgeFile(activeProjectId, file);
+          mainFiles.refresh();
+        }
+      : undefined,
+    onDeleteProjectFile: handleDeleteProjectFile,
+    onSummarize: (name) => {
+      void handleSendWithOptionalAgent(`Summarize the project knowledge file “${name}”.`);
+      selectWorkspaceTab('chat');
+    },
+    onResearch: (name) => {
+      setDeepResearchEnabled(true);
+      void handleSendWithOptionalAgent(`Research topics related to “${name}” from my project knowledge.`);
+      selectWorkspaceTab('chat');
+    },
+    // Automation state
+    browserRun,
+    isBrowserStarting,
+    browserError,
+    handleStartBrowserAutomation,
+    openBrowserPanel,
+    // Chat chrome
+    voiceLive,
+    streamPhase,
+    showTypingIndicator,
+    viewKey: 'chat',
+    messagesEndRef,
+    scrollBottomInset,
+    // Agent state
+    showAgentChrome,
+    selectedAgentInfo,
+    agentExecutor,
+    isAgentRunning,
+    agentTimelineOpen,
+    setAgentTimelineOpen,
+    cancelAgentCb,
+    retryAgentCb,
+    // Research state
+    showResearchChrome,
+    researchState,
+    isResearchRunning,
+    researchPanelOpen,
+    setResearchPanelOpen,
+    stopResearchCb,
+    interruptedSessionId,
+    resumeResearchCb,
+    researchFollowUp,
   };
 
   const needsContextChrome =

@@ -556,38 +556,39 @@ export function useChat(options?: UseChatOptions) {
             } else if (
               event.image?.dataBase64 ||
               event.image?.fileId ||
-              event.image?.imageUrl
+              (event.image as any)?.imageUrl
             ) {
-              const mimeType = event.image.mimeType || 'image/png';
-              const fileId = event.image.fileId || undefined;
-              const previewUrl = event.image.dataBase64
-                ? `data:${mimeType};base64,${event.image.dataBase64}`
+              const image = event.image as any;
+              const mimeType = image.mimeType || 'image/png';
+              const fileId = image.fileId || undefined;
+              const previewUrl = image.dataBase64
+                ? `data:${mimeType};base64,${image.dataBase64}`
                 : fileId
                   ? fileContentUrl(fileId)
-                  : event.image.imageUrl
-                    ? event.image.imageUrl.startsWith('http')
-                      ? event.image.imageUrl
-                      : event.image.imageUrl.startsWith('/api/')
-                        ? `${getApiBaseUrl().replace(/\/api\/?$/, '')}${event.image.imageUrl}`
-                        : `${getApiBaseUrl()}/${event.image.imageUrl.replace(/^\//, '')}`
+                  : image.imageUrl
+                    ? image.imageUrl.startsWith('http')
+                      ? image.imageUrl
+                      : image.imageUrl.startsWith('/api/')
+                        ? `${getApiBaseUrl().replace(/\/api\/?$/, '')}${image.imageUrl}`
+                        : `${getApiBaseUrl()}/${image.imageUrl.replace(/^\//, '')}`
                     : undefined;
               const generated: MessageAttachment = {
                 id: fileId || `gen-${Date.now()}`,
                 fileId,
-                name: event.image.prompt?.trim() || 'Generated image',
+                name: image.prompt?.trim() || 'Generated image',
                 mimeType,
                 size:
-                  typeof event.image.size === 'number'
-                    ? event.image.size
-                    : event.image.dataBase64
-                      ? Math.floor(event.image.dataBase64.length * 0.75)
+                  typeof image.size === 'number'
+                    ? image.size
+                    : image.dataBase64
+                      ? Math.floor(image.dataBase64.length * 0.75)
                       : 0,
                 kind: 'image',
                 previewUrl,
                 // Keep base64 only when we lack a durable fileId (follow-ups
                 // prefer fileId via toWireAttachments).
-                ...(fileId ? {} : event.image.dataBase64
-                  ? { dataBase64: event.image.dataBase64 }
+                ...(fileId ? {} : image.dataBase64
+                  ? { dataBase64: image.dataBase64 }
                   : {}),
               };
               setMessages((prev) => {

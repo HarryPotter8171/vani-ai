@@ -10,7 +10,9 @@ export interface MobileChatContainerProps {
   isLoading: boolean;
   isChatLoading: boolean;
   composerHeight: number;
+  workspaceBarHeight?: number;
   children?: React.ReactNode;
+  className?: string;
 }
 
 /**
@@ -32,7 +34,9 @@ const MobileChatContainer = forwardRef<HTMLDivElement, MobileChatContainerProps>
       isLoading,
       isChatLoading,
       composerHeight,
+      workspaceBarHeight = 0,
       children,
+      className,
     },
     ref
   ) {
@@ -60,11 +64,12 @@ const MobileChatContainer = forwardRef<HTMLDivElement, MobileChatContainerProps>
           'custom-scrollbar',
           'bg-background',
           // Safe area support
-          'safe-area-bottom'
+          'safe-area-bottom',
+          className
         )}
         style={{
-          // Account for header and composer
-          paddingTop: 'calc(48px + env(safe-area-inset-top, 0px))',
+          // Account for header, workspace bar, and composer
+          paddingTop: `calc(48px + env(safe-area-inset-top, 0px) + ${workspaceBarHeight}px)`,
           paddingBottom: `${composerHeight + 20}px`,
         }}
       >

@@ -247,6 +247,7 @@ function MobileSettingsScreen({
             paddingBottom: 'env(safe-area-inset-bottom, 0px)',
           }}
         >
+          <div className="flex flex-col h-full">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border/50 px-4 py-4">
             <button
@@ -272,6 +273,27 @@ function MobileSettingsScreen({
             </h1>
             <div className="h-11 w-11" /> {/* Spacer for center alignment */}
           </div>
+
+          {!showNav && (
+            <div className="flex overflow-x-auto border-b border-border/50 p-2 gap-2 custom-scrollbar">
+              {SECTIONS.map((section) => (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => setActiveSection(section.id)}
+                  className={cn(
+                    'px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap',
+                    'transition-colors',
+                    activeSection === section.id
+                      ? 'bg-accent text-text-on-accent'
+                      : 'bg-surface-input text-muted-foreground hover:bg-surface-hover'
+                  )}
+                >
+                  {section.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Content */}
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
@@ -342,6 +364,7 @@ function MobileSettingsScreen({
               </button>
             </div>
           )}
+          </div>
         </motion.div>
       )}
     </AnimatePresence>
