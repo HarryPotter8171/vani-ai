@@ -36,9 +36,13 @@ function isLocalOrLanHost(hostname: string): boolean {
 }
 
 function browserApiBaseUrl(hostname: string): string {
-  // Dev / LAN: always same host as the page, Express on API_PORT
-  if (isLocalOrLanHost(hostname)) {
-    return `http://${hostname}:${API_PORT}/api`;
+  // In development, use the Next.js proxy rewrite at /api
+  console.info('[api] browserApiBaseUrl', { 
+    env: process.env.NODE_ENV,
+    hostname,
+  });
+  if (process.env.NODE_ENV === 'development') {
+    return `/api`;
   }
   // Production hostname: optional absolute override, else same-origin /api
   const prod = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();

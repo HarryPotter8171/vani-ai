@@ -30,7 +30,13 @@ export function isDevLanOrigin(origin) {
   if (!origin) return false;
   try {
     const u = new URL(origin);
-    if (u.protocol !== "http:") return false;
+    
+    // Allow HTTPS for tunnelled development
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    
+    // Explicitly allow the ngrok development tunnel
+    if (u.hostname === "washstand-sage-reflected.ngrok-free.dev") return true;
+
     const port = u.port || "80";
     if (port !== "3000" && port !== "3001") return false;
     return isPrivateLanHostname(u.hostname);

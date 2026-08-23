@@ -72,7 +72,7 @@ const nextConfig = {
   // Allow phone / LAN access to Next.js dev resources (/_next/*).
   // Without this, Next 16 blocks cross-origin requests from the LAN IP and
   // the client never hydrates — AuthGate stays on "Loading…" forever.
-  allowedDevOrigins: lanDevOrigins(),
+  allowedDevOrigins: [...lanDevOrigins(), "washstand-sage-reflected.ngrok-free.dev"],
   // Pin the workspace root to this directory — the repo also has a root-level
   // package-lock.json (for the Playwright E2E harness) which Next would
   // otherwise misdetect as the project root.
@@ -92,6 +92,20 @@ const nextConfig = {
   },
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
+  async rewrites() {
+    return [
+      {
+        // Backend-specific auth routes
+        source: '/api/auth/:path(sync|me|revoke|logout)',
+        destination: 'http://localhost:5001/api/auth/:path',
+      },
+      {
+        // All other /api routes except /api/auth/*
+        source: '/api/:path((?!auth).*)',
+        destination: 'http://localhost:5001/api/:path',
+      },
+    ];
+  },
   ...(isCapacitorBuild
     ? {}
     : {
