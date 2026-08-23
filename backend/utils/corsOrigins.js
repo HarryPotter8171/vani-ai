@@ -48,6 +48,9 @@ export function isDevLanOrigin(origin) {
 export function getAllowedOrigins() {
   const origins = new Set();
 
+  // Explicitly allow production origin
+  origins.add("https://vani-ai-ten.vercel.app");
+
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
   if (appUrl) {
     try {
