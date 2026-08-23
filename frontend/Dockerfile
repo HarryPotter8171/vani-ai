@@ -20,7 +20,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Build-time-only — safe defaults; override the real values at deploy time
 # via the runtime environment (NextAuth/API URLs are also read at request time).
-ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:5001/api
+ARG NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
 ARG NEXT_PUBLIC_SENTRY_DSN=
 ARG NEXT_PUBLIC_SENTRY_RELEASE=
