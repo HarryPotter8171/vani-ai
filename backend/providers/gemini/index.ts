@@ -10,8 +10,8 @@ import type {
 
 const MODELS: Omit<ModelInfo, "provider" | "key" | "enabled">[] = [
   {
-    id: "gemini-2.5-flash",
-    displayName: "Gemini 2.5 Flash",
+    id: "gemini-3.1-flash",
+    displayName: "Gemini 3.1 Flash",
     capabilities: ["chat", "streaming", "vision", "tools", "reasoning", "fast"],
     contextWindow: 1_000_000,
   },
