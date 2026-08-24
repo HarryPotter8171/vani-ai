@@ -8,13 +8,18 @@ let ai;
 
 export function getGeminiClient() {
   if (!ai) {
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+
     // VANI_E2E_MODE swaps in a deterministic, offline double so the Playwright
     // end-to-end suite can exercise the real server without live Google Cloud
     // credentials. Never set in production — see testDoubles/mockGeminiClient.js.
-    ai =
-      process.env.VANI_E2E_MODE === "true"
-        ? buildMockGeminiClient()
-        : new GoogleGenAI(buildGoogleGenAIOptions({ apiVersion: "v1" }));
+    if (process.env.VANI_E2E_MODE === "true") {
+      ai = buildMockGeminiClient();
+    } else if (apiKey) {
+      ai = new GoogleGenAI({ apiKey });
+    } else {
+      ai = new GoogleGenAI(buildGoogleGenAIOptions({ apiVersion: "v1" }));
+    }
   }
   return ai;
 }

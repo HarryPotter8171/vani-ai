@@ -57,9 +57,18 @@ export function createGeminiProvider(): ProviderAdapter {
     id: "gemini",
     displayName: "Google Gemini",
     isConfigured() {
-      return Boolean(
+      const hasGcp = Boolean(
         process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_CLOUD_LOCATION
-      ) || process.env.VANI_E2E_MODE === "true";
+      );
+      const hasApiKey = Boolean(
+        process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY
+      );
+      
+      if (!hasGcp && !hasApiKey) {
+        throw new Error("Gemini provider is not configured: Missing GCP credentials or API Key.");
+      }
+      
+      return hasGcp || hasApiKey || process.env.VANI_E2E_MODE === "true";
     },
     listModels() {
       const configured = this.isConfigured();

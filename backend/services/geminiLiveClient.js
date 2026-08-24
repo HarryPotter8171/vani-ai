@@ -22,12 +22,17 @@ let liveAi;
  */
 export function getGeminiLiveClient() {
   if (!liveAi) {
-    liveAi =
-      process.env.VANI_E2E_MODE === "true"
-        ? buildMockGeminiClient()
-        : new GoogleGenAI(
-            buildGoogleGenAIOptions({ apiVersion: LIVE_API_VERSION })
-          );
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+
+    if (process.env.VANI_E2E_MODE === "true") {
+      liveAi = buildMockGeminiClient();
+    } else if (apiKey) {
+      liveAi = new GoogleGenAI({ apiKey });
+    } else {
+      liveAi = new GoogleGenAI(
+        buildGoogleGenAIOptions({ apiVersion: LIVE_API_VERSION })
+      );
+    }
   }
   return liveAi;
 }
